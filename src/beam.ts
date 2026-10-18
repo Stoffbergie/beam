@@ -75,26 +75,45 @@ export class Beam extends DurableObject<Env> {
     forwarder.send(JSON.stringify({ t: "req", id: stream, method: request.method, path, headers: forwardHeaders(request, url) }));
     this.ctx.waitUntil(this.pump(forwarder, stream, request.body));
     const head = await response;
-    return head instanceof Response ? head : this.streamedResponse(stream, head);
+    return head instanceof Response ? head : this.streamedResponse(stream, head, forwarder, request.signal);
   }
 
-  private streamedResponse(stream: number, head: Head): Response {
+  private streamedResponse(stream: number, head: Head, forwarder: WebSocket, signal: AbortSignal): Response {
     const headers = new Headers(head.headers.filter(([name]) => !hopByHop.has(name.toLowerCase())));
+    let streamController: ReadableStreamDefaultController<Uint8Array>;
+    const cancel = () => {
+      signal.removeEventListener("abort", abort);
+      const entry = this.pending.get(stream);
+      if (!entry) return;
+      this.pending.delete(stream);
+      entry.done = true;
+      entry.wake?.();
+      if (forwarder.readyState === WebSocket.OPEN) forwarder.send(JSON.stringify({ t: "cancel", id: stream }));
+    };
+    const abort = () => {
+      cancel();
+      streamController.error(new Error("The request was cancelled"));
+    };
     const body = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        streamController = controller;
+      },
       pull: async (controller) => {
         const entry = this.pending.get(stream);
         if (!entry) return controller.close();
         while (entry.chunks.length === 0 && !entry.done) await new Promise<void>((resolve) => (entry.wake = resolve));
+        if (!this.pending.has(stream)) return;
         const chunk = entry.chunks.shift();
         if (chunk) return controller.enqueue(chunk);
         this.pending.delete(stream);
+        signal.removeEventListener("abort", abort);
         if (entry.error) controller.error(new Error(entry.error));
         else controller.close();
       },
-      cancel: () => {
-        this.pending.delete(stream);
-      }
+      cancel
     });
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
     const encodeBody = headers.has("content-encoding") ? "manual" : "automatic";
     return new Response(body, { status: head.status, headers, encodeBody });
   }
