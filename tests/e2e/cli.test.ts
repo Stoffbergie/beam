@@ -1,10 +1,10 @@
 import { strict as assert } from "node:assert";
 import { test } from "vite-plus/test";
-import { createBeam, ownerToken, requests, runCli, sleep, startCli, startLocal, traffic, trafficSocket, uniqueName, waitFor, textOf } from "../helpers/beam";
+import { baseUrl, ownerToken, runCli, sleep, startCli, startLocal, traffic, trafficSocket, uniqueName, waitFor, textOf } from "../helpers/beam";
 
 const nameOf = (url: string) => new URL(url).hostname.split(".")[0];
 
-test("beam <port> puts a local server online and records what passed through", async () => {
+test("beam <port> puts a local server online", async () => {
   const local = await startLocal();
   const name = uniqueName("app");
   const cli = await startCli([String(local.port), "--name", name], { token: ownerToken });
@@ -24,8 +24,6 @@ test("beam <port> puts a local server online and records what passed through", a
     const submitted = local.received.find((request) => request.url === "/submit");
     assert.equal(submitted?.headers["content-length"], "7");
 
-    const recorded = await requests(name, ownerToken);
-    assert.ok(recorded.some((request) => request.path === "/submit" && request.status === 200 && request.forwarded));
     await waitFor(
       () => (cli.output().includes("/submit") ? true : undefined),
       () => `CLI did not print the request\n${cli.output()}`
@@ -78,43 +76,34 @@ test("a stopped local server gets a clear 502", async () => {
   }
 });
 
-test("forwarding without the owner token is refused with a hint", async () => {
-  const result = await runCli(["3000"]);
-  assert.equal(result.code, 1);
-  assert.match(result.output, /owner token/);
+test("sharing needs the right owner token", async () => {
+  const missing = await runCli(["3000"]);
+  assert.equal(missing.code, 1);
+  assert.match(missing.output, /owner token/);
+
+  const wrong = await fetch(`${baseUrl}/app/connect`, { headers: { Authorization: "Bearer not-the-token" } });
+  assert.equal(wrong.status, 401);
+  const right = await fetch(`${baseUrl}/app/connect`, { headers: { Authorization: `Bearer ${ownerToken}` } });
+  assert.equal(right.status, 426);
 });
 
-test("beam on its own catches requests and prints them", async () => {
-  const cli = await startCli([]);
-  try {
-    const name = nameOf(cli.url);
-    await sleep(500);
-    await traffic(name, "/hook", { method: "POST", body: "{}" });
-    await waitFor(
-      () => (/POST\s+200\s+\/hook/.test(cli.output()) ? true : undefined),
-      () => `CLI did not print the webhook\n${cli.output()}`
-    );
-  } finally {
-    cli.stop();
-  }
-});
-
-test("replay sends a captured webhook to a local server again", async () => {
-  const beam = await createBeam();
-  await traffic(beam.name, "/stripe?attempt=1", { method: "POST", headers: { "stripe-signature": "t=2,v1=def", "content-type": "application/json" }, body: '{"id":"evt_1"}' });
+test("a random URL works without --name and goes offline when beam stops", async () => {
   const local = await startLocal();
-  try {
-    const result = await runCli(["replay", `${beam.watch}`, "--to", String(local.port)]);
-    assert.equal(result.code, 0, result.output);
-    assert.match(result.output, /POST\s+200\s+\/stripe\?attempt=1/);
-    const [received] = local.received;
-    assert.equal(received.method, "POST");
-    assert.equal(received.url, "/stripe?attempt=1");
-    assert.equal(received.body, '{"id":"evt_1"}');
-    assert.equal(received.headers["stripe-signature"], "t=2,v1=def");
-  } finally {
-    await local.close();
-  }
+  const cli = await startCli([String(local.port)], { token: ownerToken });
+  const name = nameOf(cli.url);
+  assert.match(name, /^[a-z0-9]{8}$/);
+  assert.equal((await traffic(name, "/")).status, 200, cli.output());
+  cli.stop();
+  await waitFor(
+    () => (cli.process.exitCode !== null || cli.process.signalCode !== null ? true : undefined),
+    () => "CLI did not exit"
+  );
+  await sleep(300);
+  const page = await traffic(name, "/", { headers: { accept: "text/html" } });
+  assert.equal(page.status, 503);
+  assert.match(page.text, /This beam is offline/);
+  assert.equal((await traffic(name, "/")).status, 502);
+  await local.close();
 });
 
 test("beam <port> -- <command> starts the app, waits for it, then shares it", async () => {

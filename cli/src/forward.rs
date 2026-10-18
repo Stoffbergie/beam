@@ -87,7 +87,9 @@ impl Target {
 #[derive(Deserialize)]
 struct Control {
     t: String,
+    #[serde(default)]
     id: u32,
+    url: Option<String>,
     method: Option<String>,
     path: Option<String>,
     headers: Option<Vec<(String, String)>>,
@@ -100,9 +102,10 @@ type Outbox = mpsc::UnboundedSender<Message>;
 
 pub async fn run(name: &str, token: &str, target: &Target) -> Result<()> {
     let mut delay = 1;
+    let mut announced = false;
     loop {
         let started = Instant::now();
-        match session(name, token, target).await {
+        match session(name, token, target, &mut announced).await {
             Err(error) if error.downcast_ref::<api::Refused>().is_some() => return Err(error),
             Err(error) => output::note(&format!("Disconnected: {error}. Reconnecting…")),
             Ok(()) => output::note("Disconnected. Reconnecting…"),
@@ -115,8 +118,8 @@ pub async fn run(name: &str, token: &str, target: &Target) -> Result<()> {
     }
 }
 
-async fn session(name: &str, token: &str, target: &Target) -> Result<()> {
-    let mut request = api::socket_url(name, "forward").into_client_request()?;
+async fn session(name: &str, token: &str, target: &Target, announced: &mut bool) -> Result<()> {
+    let mut request = api::socket_url(name).into_client_request()?;
     request.headers_mut().insert(
         "Authorization",
         HeaderValue::from_str(&format!("Bearer {token}"))?,
@@ -245,6 +248,15 @@ async fn session(name: &str, token: &str, target: &Target) -> Result<()> {
                                 }
                             });
                             let _ = local.unbounded_send(Message::Close(frame));
+                        }
+                    }
+                    "hello" => {
+                        if *announced {
+                            output::note("Reconnected");
+                        } else if let Some(url) = control.url {
+                            println!("{url} → {}", target.display);
+                            output::note("Stop anytime: Ctrl+C");
+                            *announced = true;
                         }
                     }
                     _ => {}

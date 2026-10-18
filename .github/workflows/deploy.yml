@@ -45,9 +45,6 @@ jobs:
 
       - name: Smoke test
         run: |
-          url=$(curl -fsS --retry 10 --retry-delay 3 --retry-all-errors -X POST -D headers.txt https://beam.stoff.dev)
-          name=$(grep -i '^x-beam-name:' headers.txt | cut -d' ' -f2 | tr -d '\r')
-          key=$(grep -i '^x-beam-key:' headers.txt | cut -d' ' -f2 | tr -d '\r')
-          test "$(curl -fsS --retry 10 --retry-delay 3 --retry-all-errors "$url/smoke" -d beam-smoke)" = "ok"
-          curl -fsS -H "Authorization: Bearer $key" "https://beam.stoff.dev/$name/requests" | grep -q '"/smoke"'
-          curl -fsS -X DELETE -H "Authorization: Bearer $key" "https://beam.stoff.dev/$name"
+          curl -fsS --retry 10 --retry-delay 3 --retry-all-errors https://beam.stoff.dev | grep -q '^beam: '
+          test "$(curl -sS -o /dev/null -w '%{http_code}' https://beam.stoff.dev/smoke/connect)" = "401"
+          test "$(curl -sS -o /dev/null -w '%{http_code}' https://smoke-offline.beam.stoff.dev/)" = "502"

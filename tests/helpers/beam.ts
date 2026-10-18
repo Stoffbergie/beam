@@ -13,19 +13,7 @@ export const ownerToken = inject("ownerToken");
 const cliPath = inject("cli");
 const serverPort = new URL(baseUrl).port;
 
-export type Created = { name: string; url: string; key: string; watch: string; owned: boolean };
 export type Reply = { status: number; headers: IncomingHttpHeaders; text: string };
-export type Summary = { id: number; method: string; path: string; size: number; status: number | null; forwarded: boolean };
-export type Detail = Summary & { headers: Record<string, string>; body: string; bodyEncoding: string; truncated: boolean };
-
-export async function createBeam(options: { token?: string; name?: string } = {}): Promise<Created> {
-  const query = options.name ? `?name=${options.name}` : "";
-  const headers: Record<string, string> = { Accept: "application/json" };
-  if (options.token) headers.Authorization = `Bearer ${options.token}`;
-  const response = await fetch(`${baseUrl}/${query}`, { method: "POST", headers });
-  if (response.status !== 201) throw new Error(`create failed: ${response.status} ${await response.text()}`);
-  return (await response.json()) as Created;
-}
 
 export function traffic(name: string, path: string, init: { method?: string; headers?: Record<string, string>; body?: string } = {}): Promise<Reply> {
   return new Promise((resolve, reject) => {
@@ -44,16 +32,6 @@ export function traffic(name: string, path: string, init: { method?: string; hea
 
 export function trafficSocket(name: string, path: string): WebSocket {
   return new WebSocket(`ws://127.0.0.1:${serverPort}${path}`, { headers: { host: `${name}.${tunnelDomain}` } });
-}
-
-export async function requests(name: string, credential: string): Promise<Summary[]> {
-  const response = await fetch(`${baseUrl}/${name}/requests`, { headers: { Authorization: `Bearer ${credential}` } });
-  return (await response.json()) as Summary[];
-}
-
-export async function detail(name: string, credential: string, id: number): Promise<Detail> {
-  const response = await fetch(`${baseUrl}/${name}/requests/${id}`, { headers: { Authorization: `Bearer ${credential}` } });
-  return (await response.json()) as Detail;
 }
 
 export type Cli = { process: ChildProcess; output: () => string; url: string; stop: () => void };
@@ -76,13 +54,7 @@ export async function startCli(args: string[], options: { token?: string } = {})
     () => `CLI did not print a URL\n${output()}`,
     20_000
   );
-  if (args.length > 0 && !args[0].startsWith("-") && !["watch", "replay", "ls", "rm", "config"].includes(args[0])) {
-    await waitFor(
-      () => (output().includes("Stop anytime") ? true : undefined),
-      () => `CLI did not connect\n${output()}`
-    );
-    await sleep(300);
-  }
+  await sleep(300);
   return { process: child, output, url, stop };
 }
 
