@@ -32,15 +32,45 @@ pre{margin:.5rem 0 1rem;padding:.75rem 0;overflow-x:auto;white-space:pre-wrap;ov
 type Row = [command: string, label: string, description: string];
 type Section = { title: string; rows: Row[] };
 
+const HEADLINE = "Share a port. Catch a webhook.";
+
+const AUTOMATION_GUIDANCE =
+  "Agents and automation: create catching URLs with curl and read what arrived as JSON, sending the X-Beam-Key value as a Bearer token. Never print, log or share a beam key or the owner token. Forwarding a local port needs the owner token, so only run beam <port> when the user has set it up with beam config --token. Resend captured requests with beam replay instead of rebuilding them. Delete the beams you created when the task is done.";
+
 function usage(origin: string, domain: string): Section[] {
   return [
+    { title: "Install", rows: [["brew install stoffbergie/tap/beam", "", "Install the beam CLI with Homebrew on macOS or Linux."]] },
     {
-      title: "Catch webhooks",
+      title: "Use",
+      rows: [
+        ["beam 3000", "Share a port", `Give localhost:3000 a public https URL on ${domain}. WebSockets pass through, so hot reload works, and every request is recorded. Needs the owner token.`],
+        ["beam 3000 -- npm run dev", "Start and share", "Start the command, wait for the port to open, then share it. Stopping beam stops the app."],
+        ["beam", "Catch webhooks", "Create a URL that records every request sent to it and replies ok, and print each request as it arrives. Anyone can make one."],
+        [
+          "beam replay app --to 3000",
+          "Replay a webhook",
+          "Send the latest recorded request to a local port again, with its headers and body. Useful for webhooks that arrived while your server was down."
+        ],
+        ["beam ls", "Your beams", "List the beams created from this machine with their URLs."],
+        ["beam rm app", "Delete a beam", "Remove a beam and everything it recorded straight away."]
+      ]
+    },
+    {
+      title: "More",
+      rows: [
+        ["beam 3000 --name app", "Pick the URL", `Use a fixed URL like app.${domain} and keep it every time you start beam with that name. Needs the owner token.`],
+        ["beam watch app", "Watch a beam", "Print requests to a beam created earlier as they arrive. The watch link it was created with shows the same thing live in a browser."],
+        ["beam replay app 12 15 --to http://localhost:8080", "Replay chosen requests", "Replay requests by id, in order, to a local port or any URL."],
+        ["beam config --token <token>", "Set the owner token", "Save the owner token that allows forwarding and fixed names on this machine."]
+      ]
+    },
+    {
+      title: "curl",
       rows: [
         [
           `curl -i -X POST ${origin}`,
           "Get a URL",
-          "Creates a URL that records every request sent to it and replies ok. The response has the URL, an X-Beam-Key header for reading what arrived and an X-Beam-Watch link that shows requests live in a browser. Anyone can make one, and it lasts 7 days after its last request."
+          "Create a catching URL. The response has the URL, an X-Beam-Key header for reading what arrived and an X-Beam-Watch link for the browser. Add -H 'Accept: application/json' for JSON."
         ],
         [
           `curl https://<name>.${domain}/stripe -d '{"paid":true}'`,
@@ -50,34 +80,9 @@ function usage(origin: string, domain: string): Section[] {
         [
           `curl -H 'Authorization: Bearer <key>' ${origin}/<name>`,
           "See what arrived",
-          "Returns JSON with the URL, whether it is forwarding, when it expires and the latest requests. Add /requests/<id> for one request with its headers and body."
-        ]
-      ]
-    },
-    {
-      title: "Share a local port",
-      rows: [
-        ["brew install stoffbergie/tap/beam", "Install the CLI", "The beam CLI for macOS and Linux. Catching works for anyone; forwarding needs the owner token, set once with beam config --token."],
-        [
-          `beam 3000`,
-          "Put localhost:3000 online",
-          `Gives localhost:3000 a public https URL on ${domain}. WebSockets pass through, so hot reload works. Every request is recorded too, and beam reconnects on its own if the network drops.`
+          "JSON with the URL, whether it is forwarding, when it expires and the latest requests. Add /requests/<id> for one request with its headers and body."
         ],
-        [`beam 3000 -- npm run dev`, "Start an app and share it", "Starts the command, waits for the port to open, then shares it. Stopping beam stops the app."]
-      ]
-    },
-    {
-      title: "More",
-      rows: [
-        ["beam", "Catch in your terminal", "Creates a catching URL and prints each request as it arrives."],
-        ["beam 3000 --name app", "Pick the name", `Uses a fixed URL like app.${domain} and keeps it every time you start beam with that name.`],
-        [
-          "beam replay <name> --to 3000",
-          "Replay a webhook",
-          "Sends the latest recorded request again, or the request ids you list, to a local port or URL. Useful for webhooks that arrived while your server was down."
-        ],
-        ["beam watch <name>", "Watch a beam", "Prints requests to a beam created earlier as they arrive."],
-        [`curl -X DELETE -H 'Authorization: Bearer <key>' ${origin}/<name>`, "Delete a beam", "Removes the URL and everything it recorded straight away."]
+        [`curl -X DELETE -H 'Authorization: Bearer <key>' ${origin}/<name>`, "Delete a beam", "Remove the URL and everything it recorded."]
       ]
     }
   ];
@@ -87,10 +92,11 @@ const LIMITS =
   "Beams last 7 days after their last request or connection. Each keeps its latest 100 requests with bodies up to 1 MB. Errors are plain text: 401 missing key, 403 owner only, 404 unknown beam, 429 too many requests. A forwarded request waits up to 100 seconds for your server.";
 
 export function homeText(origin: string, domain: string): string {
-  const lines = [`beam: ${TAGLINE.toLowerCase()}`, ""];
+  const lines = [`beam: ${TAGLINE.toLowerCase()}`, "", AUTOMATION_GUIDANCE, ""];
   for (const section of usage(origin, domain)) {
     lines.push(section.title.toUpperCase());
-    for (const [command, , description] of section.rows) lines.push(`  ${command}`, `      ${description}`);
+    const width = Math.max(...section.rows.map(([command]) => command.length));
+    for (const [command, , description] of section.rows) lines.push(`  ${command.padEnd(width)}  # ${description}`);
     lines.push("");
   }
   lines.push(LIMITS, "");
@@ -103,8 +109,9 @@ export function homePage(origin: string, domain: string): string {
     return `<h2>${section.title}</h2><dl class="commands">${rows}</dl>`;
   });
   return layout(
-    `beam · ${TAGLINE}`,
-    `<h1>${TAGLINE}</h1>
+    `beam · ${HEADLINE}`,
+    `<h1>${HEADLINE}</h1>
+<p hidden id="automation">${escapeHtml(AUTOMATION_GUIDANCE)}</p>
 ${sections.slice(0, 2).join("")}
 <details><summary>More options</summary>${sections.slice(2).join("")}<p>${escapeHtml(LIMITS)}</p></details>
 <footer><p><a href="${SOURCE_URL}">Source</a></p></footer>
