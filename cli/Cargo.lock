@@ -104,6 +104,7 @@ dependencies = [
  "dirs",
  "futures-channel",
  "futures-util",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",

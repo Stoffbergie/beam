@@ -133,8 +133,11 @@ async fn share(target: Option<String>, name: Option<String>, run: Vec<String>) -
     if !run.is_empty() {
         let command = run.join(" ");
         output::note(&format!("Starting {command}"));
-        let mut process = shell(&command).kill_on_drop(true).spawn()?;
-        forward::wait_for_port(&target, &mut process).await?;
+        let mut process = shell(&command).spawn()?;
+        if let Err(error) = forward::wait_for_port(&target, &mut process).await {
+            stop(&mut process).await;
+            return Err(error);
+        }
         child = Some(process);
     }
 
@@ -145,7 +148,7 @@ async fn share(target: Option<String>, name: Option<String>, run: Vec<String>) -
 
     let result = until_interrupted(forward::run(&created.name, &token, &target)).await;
     if let Some(mut child) = child {
-        let _ = child.kill().await;
+        stop(&mut child).await;
     }
     result
 }
@@ -158,7 +161,7 @@ async fn until_interrupted(task: impl std::future::Future<Output = Result<()>>) 
 }
 
 fn shell(command: &str) -> tokio::process::Command {
-    if cfg!(windows) {
+    let mut process = if cfg!(windows) {
         let mut process = tokio::process::Command::new("cmd");
         process.arg("/C").arg(command);
         process
@@ -166,5 +169,24 @@ fn shell(command: &str) -> tokio::process::Command {
         let mut process = tokio::process::Command::new("sh");
         process.arg("-c").arg(command);
         process
+    };
+    process
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    process.process_group(0);
+    process
+}
+
+async fn stop(child: &mut tokio::process::Child) {
+    #[cfg(unix)]
+    if let Some(id) = child.id() {
+        let group = -(id as i32);
+        unsafe { libc::kill(group, libc::SIGTERM) };
+        let exited = tokio::time::timeout(std::time::Duration::from_secs(3), child.wait()).await;
+        if exited.is_err() {
+            unsafe { libc::kill(group, libc::SIGKILL) };
+        }
     }
+    let _ = child.kill().await;
 }
