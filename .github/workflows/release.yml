@@ -1,0 +1,244 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, for example 0.2.0"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Verify Release
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate version
+        run: |
+          cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' cli/Cargo.toml | head -1)
+          test "${{ steps.version.outputs.version }}" = "$cargo_version"
+
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    needs: [verify]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: blacksmith-4vcpu-ubuntu-2404
+            name: beam-x86_64-unknown-linux-gnu
+          - target: x86_64-unknown-linux-musl
+            os: blacksmith-4vcpu-ubuntu-2404
+            name: beam-x86_64-unknown-linux-musl
+          - target: aarch64-unknown-linux-gnu
+            os: blacksmith-4vcpu-ubuntu-2404
+            name: beam-aarch64-unknown-linux-gnu
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: beam-x86_64-apple-darwin
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: beam-aarch64-apple-darwin
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            name: beam-x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+
+      - name: Build
+        working-directory: cli
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp "cli/target/${{ matrix.target }}/release/beam" dist/
+          cp LICENSE dist/
+          cp README.md dist/
+          cd dist
+          tar -czvf "../${{ matrix.name }}.tar.gz" ./*
+
+      - name: Validate package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          tar -tzf "${{ matrix.name }}.tar.gz"
+          test -x dist/beam
+          case "${{ matrix.target }}" in
+            x86_64-unknown-linux-gnu|x86_64-unknown-linux-musl)
+              ./dist/beam --version
+              ;;
+            x86_64-apple-darwin)
+              if [ "$(uname -m)" = "x86_64" ]; then ./dist/beam --version; fi
+              ;;
+            aarch64-apple-darwin)
+              if [ "$(uname -m)" = "arm64" ]; then ./dist/beam --version; fi
+              ;;
+          esac
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir dist
+          cp "cli/target/${{ matrix.target }}/release/beam.exe" dist/
+          cp LICENSE dist/
+          cp README.md dist/
+          cd dist
+          7z a -tzip "../${{ matrix.name }}.zip" ./*
+
+      - name: Validate package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          7z l "${{ matrix.name }}.zip"
+          Test-Path dist/beam.exe
+          dist/beam.exe --version
+
+      - name: Upload artifact (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.tar.gz
+
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.zip
+
+  release:
+    name: Create Release
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [verify, build]
+    outputs:
+      version: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir release
+          for dir in artifacts/*/; do
+            cp "$dir"/* release/
+          done
+          cd release
+          sha256sum ./* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Validate release files
+        run: |
+          test -f release/beam-x86_64-unknown-linux-gnu.tar.gz
+          test -f release/beam-x86_64-unknown-linux-musl.tar.gz
+          test -f release/beam-aarch64-unknown-linux-gnu.tar.gz
+          test -f release/beam-x86_64-apple-darwin.tar.gz
+          test -f release/beam-aarch64-apple-darwin.tar.gz
+          test -f release/beam-x86_64-pc-windows-msvc.zip
+          test -f release/SHA256SUMS
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.verify.outputs.version }}
+          name: v${{ needs.verify.outputs.version }}
+          files: release/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+
+  update-homebrew:
+    name: Update Homebrew Formula
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [release]
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Calculate SHA256
+        id: sha
+        run: |
+          DARWIN_X64=$(sha256sum artifacts/beam-x86_64-apple-darwin/beam-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)
+          DARWIN_ARM64=$(sha256sum artifacts/beam-aarch64-apple-darwin/beam-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)
+          LINUX_X64=$(sha256sum artifacts/beam-x86_64-unknown-linux-gnu/beam-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
+          LINUX_ARM64=$(sha256sum artifacts/beam-aarch64-unknown-linux-gnu/beam-aarch64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
+          {
+            echo "darwin_x64=$DARWIN_X64"
+            echo "darwin_arm64=$DARWIN_ARM64"
+            echo "linux_x64=$LINUX_X64"
+            echo "linux_arm64=$LINUX_ARM64"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Update Homebrew tap
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          repository: Stoffbergie/homebrew-tap
+          event-type: update-formula
+          client-payload: |
+            {
+              "formula": "beam",
+              "version": "${{ needs.release.outputs.version }}",
+              "darwin_x64_sha": "${{ steps.sha.outputs.darwin_x64 }}",
+              "darwin_arm64_sha": "${{ steps.sha.outputs.darwin_arm64 }}",
+              "linux_x64_sha": "${{ steps.sha.outputs.linux_x64 }}",
+              "linux_arm64_sha": "${{ steps.sha.outputs.linux_arm64 }}"
+            }

@@ -1,0 +1,43 @@
+{
+  "name": "beam",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Your localhost, on the internet.",
+  "homepage": "https://beam.stoff.dev",
+  "bugs": {
+    "url": "https://github.com/Stoffbergie/beam/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Stoffbergie/beam.git"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "check": "vp check && cargo fmt --manifest-path cli/Cargo.toml --check && cargo clippy --manifest-path cli/Cargo.toml --locked -- -D warnings && vp test run",
+    "deploy": "vp build && wrangler deploy",
+    "prepare": "vp config"
+  },
+  "dependencies": {
+    "hono": "^4.13.13"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.64.0",
+    "@cloudflare/workers-types": "^5.20261016.1",
+    "@types/node": "^26.6.5",
+    "@types/ws": "^8.18.1",
+    "vite-plus": "catalog:",
+    "wrangler": "^4.151.1",
+    "ws": "^8.18.3"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.14.0",
+      "onFail": "download"
+    }
+  },
+  "packageManager": "pnpm@12.14.0"
+}

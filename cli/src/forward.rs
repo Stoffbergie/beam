@@ -1,0 +1,507 @@
+use crate::{api, output};
+use anyhow::{anyhow, bail, Result};
+use bytes::Bytes;
+use futures_channel::mpsc;
+use futures_util::{SinkExt, StreamExt};
+use serde::Deserialize;
+use serde_json::json;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+use tokio::task::AbortHandle;
+use tokio_tungstenite::tungstenite::{
+    client::IntoClientRequest,
+    http::{HeaderName, HeaderValue},
+    Message,
+};
+
+const REQUEST_BODY: u8 = 1;
+const RESPONSE_BODY: u8 = 2;
+const SOCKET_MESSAGE: u8 = 3;
+const CHUNK: usize = 256 * 1024;
+const BUFFERED_BODY: usize = 32 * 1024 * 1024;
+const SKIPPED_REQUEST: [&str; 5] = [
+    "host",
+    "connection",
+    "keep-alive",
+    "transfer-encoding",
+    "upgrade",
+];
+const SKIPPED_SOCKET: [&str; 8] = [
+    "host",
+    "connection",
+    "upgrade",
+    "sec-websocket-key",
+    "sec-websocket-version",
+    "sec-websocket-extensions",
+    "content-length",
+    "transfer-encoding",
+];
+
+#[derive(Clone)]
+pub struct Target {
+    pub http: String,
+    pub socket: String,
+    pub display: String,
+    pub port: Option<u16>,
+}
+
+impl Target {
+    pub fn parse(input: &str) -> Result<Self> {
+        let input = input.trim().trim_end_matches('/');
+        if let Ok(port) = input.parse::<u16>() {
+            return Ok(Self {
+                http: format!("http://localhost:{port}"),
+                socket: format!("ws://localhost:{port}"),
+                display: format!("localhost:{port}"),
+                port: Some(port),
+            });
+        }
+        let http = if input.contains("://") {
+            input.to_string()
+        } else {
+            format!("http://{input}")
+        };
+        let rest = http
+            .split_once("://")
+            .map(|(_, rest)| rest.to_string())
+            .ok_or_else(|| anyhow!("could not read {input} as a port or URL"))?;
+        let socket = if http.starts_with("https://") {
+            format!("wss://{rest}")
+        } else {
+            format!("ws://{rest}")
+        };
+        let port = rest
+            .split('/')
+            .next()
+            .and_then(|host| host.rsplit_once(':'))
+            .and_then(|(_, port)| port.parse().ok());
+        Ok(Self {
+            http,
+            socket,
+            display: rest,
+            port,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+struct Control {
+    t: String,
+    id: u32,
+    method: Option<String>,
+    path: Option<String>,
+    headers: Option<Vec<(String, String)>>,
+    data: Option<String>,
+    code: Option<u16>,
+    reason: Option<String>,
+}
+
+type Outbox = mpsc::UnboundedSender<Message>;
+
+pub async fn run(name: &str, token: &str, target: &Target) -> Result<()> {
+    let mut delay = 1;
+    loop {
+        let started = Instant::now();
+        match session(name, token, target).await {
+            Err(error) if error.downcast_ref::<api::Refused>().is_some() => return Err(error),
+            Err(error) => output::note(&format!("Disconnected: {error}. Reconnecting…")),
+            Ok(()) => output::note("Disconnected. Reconnecting…"),
+        }
+        if started.elapsed() > Duration::from_secs(30) {
+            delay = 1;
+        }
+        tokio::time::sleep(Duration::from_secs(delay)).await;
+        delay = (delay * 2).min(30);
+    }
+}
+
+async fn session(name: &str, token: &str, target: &Target) -> Result<()> {
+    let mut request = api::socket_url(name, "forward").into_client_request()?;
+    request.headers_mut().insert(
+        "Authorization",
+        HeaderValue::from_str(&format!("Bearer {token}"))?,
+    );
+    let socket = match tokio_tungstenite::connect_async(request).await {
+        Ok((socket, _)) => socket,
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+            return Err(api::Refused(response.status().as_u16()).into())
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let (mut sink, mut stream) = socket.split();
+    let (outbox, mut inbox) = mpsc::unbounded::<Message>();
+
+    let writer = tokio::spawn(async move {
+        while let Some(message) = inbox.next().await {
+            if sink.send(message).await.is_err() {
+                break;
+            }
+        }
+    });
+    let pinger = {
+        let outbox = outbox.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(25)).await;
+                if outbox
+                    .unbounded_send(Message::text(r#"{"t":"ping","id":0}"#))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+    };
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    let mut bodies: HashMap<u32, mpsc::Sender<Result<Bytes, std::io::Error>>> = HashMap::new();
+    let mut sockets: HashMap<u32, (Outbox, AbortHandle)> = HashMap::new();
+    let mut tasks: Vec<AbortHandle> = Vec::new();
+
+    let result = loop {
+        let Some(message) = stream.next().await else {
+            break Ok(());
+        };
+        let message = match message {
+            Ok(message) => message,
+            Err(error) => break Err(error.into()),
+        };
+        match message {
+            Message::Binary(bytes) if bytes.len() >= 5 => {
+                let kind = bytes[0];
+                let id = u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
+                let payload = bytes.slice(5..);
+                if kind == REQUEST_BODY {
+                    if let Some(body) = bodies.get_mut(&id) {
+                        let _ = body.send(Ok(payload)).await;
+                    }
+                } else if kind == SOCKET_MESSAGE {
+                    if let Some((local, _)) = sockets.get(&id) {
+                        let _ = local.unbounded_send(Message::Binary(payload));
+                    }
+                }
+            }
+            Message::Text(text) => {
+                let Ok(control) = serde_json::from_str::<Control>(&text) else {
+                    continue;
+                };
+                match control.t.as_str() {
+                    "req" => {
+                        let method = control.method.unwrap_or_else(|| "GET".to_string());
+                        let headers = control.headers.unwrap_or_default();
+                        let length = headers
+                            .iter()
+                            .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                            .and_then(|(_, value)| value.parse::<u64>().ok());
+                        let has_body = length.map(|length| length > 0).unwrap_or(!matches!(
+                            method.as_str(),
+                            "GET" | "HEAD" | "OPTIONS" | "DELETE"
+                        ));
+                        let (sender, receiver) = mpsc::channel(16);
+                        if has_body {
+                            bodies.insert(control.id, sender);
+                        }
+                        let task = tokio::spawn(proxy(
+                            client.clone(),
+                            target.clone(),
+                            control.id,
+                            method,
+                            control.path.unwrap_or_else(|| "/".to_string()),
+                            headers,
+                            has_body.then_some(receiver),
+                            outbox.clone(),
+                        ));
+                        tasks.push(task.abort_handle());
+                    }
+                    "end" => {
+                        bodies.remove(&control.id);
+                    }
+                    "ws" => {
+                        let (local, receiver) = mpsc::unbounded::<Message>();
+                        let task = tokio::spawn(passthrough(
+                            target.clone(),
+                            control.id,
+                            control.path.unwrap_or_else(|| "/".to_string()),
+                            control.headers.unwrap_or_default(),
+                            receiver,
+                            outbox.clone(),
+                        ));
+                        sockets.insert(control.id, (local, task.abort_handle()));
+                    }
+                    "wst" => {
+                        if let Some((local, _)) = sockets.get(&control.id) {
+                            let _ = local
+                                .unbounded_send(Message::text(control.data.unwrap_or_default()));
+                        }
+                    }
+                    "wsc" => {
+                        if let Some((local, _)) = sockets.remove(&control.id) {
+                            let frame = control.code.map(|code| {
+                                tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                                    code: code.into(),
+                                    reason: control.reason.unwrap_or_default().into(),
+                                }
+                            });
+                            let _ = local.unbounded_send(Message::Close(frame));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Message::Close(frame) => {
+                if let Some(frame) = frame {
+                    if u16::from(frame.code) == 4000 {
+                        break Err(anyhow!("another beam took over this name"));
+                    }
+                }
+                break Ok(());
+            }
+            _ => {}
+        }
+        tasks.retain(|task| !task.is_finished());
+    };
+
+    for task in tasks {
+        task.abort();
+    }
+    for (_, (_, task)) in sockets {
+        task.abort();
+    }
+    pinger.abort();
+    writer.abort();
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn proxy(
+    client: reqwest::Client,
+    target: Target,
+    id: u32,
+    method: String,
+    path: String,
+    headers: Vec<(String, String)>,
+    body: Option<mpsc::Receiver<Result<Bytes, std::io::Error>>>,
+    outbox: Outbox,
+) {
+    let started = Instant::now();
+    let Ok(verb) = reqwest::Method::from_bytes(method.as_bytes()) else {
+        let _ = outbox.unbounded_send(control(
+            json!({"t": "err", "id": id, "message": "Unsupported method\n"}),
+        ));
+        return;
+    };
+    let length = headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, value)| value.parse::<usize>().ok());
+    let mut request = client.request(verb, format!("{}{}", target.http, path));
+    for (name, value) in &headers {
+        let lower = name.to_ascii_lowercase();
+        if SKIPPED_REQUEST.contains(&lower.as_str()) || lower == "content-length" {
+            continue;
+        }
+        request = request.header(name, value);
+    }
+    if let Some(mut body) = body {
+        match length {
+            Some(length) if length <= BUFFERED_BODY => {
+                let mut bytes = Vec::with_capacity(length);
+                while let Some(Ok(chunk)) = body.next().await {
+                    bytes.extend_from_slice(&chunk);
+                }
+                request = request.body(bytes);
+            }
+            _ => request = request.body(reqwest::Body::wrap_stream(body)),
+        }
+    }
+
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(error) => {
+            let message = format!(
+                "Nothing answered on {}: {}\n",
+                target.display,
+                root_cause(&error)
+            );
+            let _ =
+                outbox.unbounded_send(control(json!({"t": "err", "id": id, "message": message})));
+            output::request(
+                &method,
+                &path,
+                Some(502),
+                &format!("nothing answered on {}", target.display),
+            );
+            return;
+        }
+    };
+
+    let status = response.status().as_u16();
+    let response_headers: Vec<(String, String)> = response
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.to_string(),
+                String::from_utf8_lossy(value.as_bytes()).to_string(),
+            )
+        })
+        .collect();
+    let _ = outbox.unbounded_send(control(
+        json!({"t": "res", "id": id, "status": status, "headers": response_headers}),
+    ));
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Ok(chunk) => {
+                for part in chunk.chunks(CHUNK) {
+                    let _ = outbox.unbounded_send(frame(RESPONSE_BODY, id, part));
+                }
+            }
+            Err(error) => {
+                let _ = outbox.unbounded_send(control(
+                    json!({"t": "err", "id": id, "message": error.to_string()}),
+                ));
+                return;
+            }
+        }
+    }
+    let _ = outbox.unbounded_send(control(json!({"t": "end", "id": id})));
+    output::request(
+        &method,
+        &path,
+        Some(status),
+        &output::duration(started.elapsed()),
+    );
+}
+
+async fn passthrough(
+    target: Target,
+    id: u32,
+    path: String,
+    headers: Vec<(String, String)>,
+    mut from_beam: mpsc::UnboundedReceiver<Message>,
+    outbox: Outbox,
+) {
+    let fail = |outbox: &Outbox| {
+        let _ = outbox.unbounded_send(control(json!({"t": "ws-fail", "id": id})));
+    };
+    let Ok(mut request) = format!("{}{}", target.socket, path).into_client_request() else {
+        return fail(&outbox);
+    };
+    for (name, value) in &headers {
+        if SKIPPED_SOCKET.contains(&name.to_ascii_lowercase().as_str()) {
+            continue;
+        }
+        if let (Ok(name), Ok(value)) = (
+            HeaderName::try_from(name.as_str()),
+            HeaderValue::from_str(value),
+        ) {
+            request.headers_mut().insert(name, value);
+        }
+    }
+    let (socket, response) = match tokio_tungstenite::connect_async(request).await {
+        Ok(connected) => connected,
+        Err(_) => {
+            output::request(
+                "WS",
+                &path,
+                Some(502),
+                &format!("nothing answered on {}", target.display),
+            );
+            return fail(&outbox);
+        }
+    };
+    let protocol = response
+        .headers()
+        .get("sec-websocket-protocol")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let _ = outbox.unbounded_send(control(
+        json!({"t": "ws-ok", "id": id, "protocol": protocol}),
+    ));
+    output::request("WS", &path, Some(101), "connected");
+
+    let (mut local_sink, mut local_stream) = socket.split();
+    loop {
+        tokio::select! {
+            message = from_beam.next() => match message {
+                Some(Message::Close(frame)) => {
+                    let _ = local_sink.send(Message::Close(frame)).await;
+                    break;
+                }
+                Some(message) => {
+                    if local_sink.send(message).await.is_err() {
+                        break;
+                    }
+                }
+                None => break,
+            },
+            message = local_stream.next() => match message {
+                Some(Ok(Message::Text(text))) => {
+                    let _ = outbox.unbounded_send(control(json!({"t": "wst", "id": id, "data": text.as_str()})));
+                }
+                Some(Ok(Message::Binary(bytes))) => {
+                    let _ = outbox.unbounded_send(frame(SOCKET_MESSAGE, id, &bytes));
+                }
+                Some(Ok(Message::Close(frame))) => {
+                    let (code, reason) = frame
+                        .map(|frame| (u16::from(frame.code), frame.reason.to_string()))
+                        .unwrap_or((1000, String::new()));
+                    let _ = outbox.unbounded_send(control(json!({"t": "wsc", "id": id, "code": code, "reason": reason})));
+                    break;
+                }
+                Some(Ok(_)) => {}
+                Some(Err(_)) | None => {
+                    let _ = outbox.unbounded_send(control(json!({"t": "wsc", "id": id, "code": 1001, "reason": ""})));
+                    break;
+                }
+            },
+        }
+    }
+}
+
+pub async fn wait_for_port(target: &Target, child: &mut tokio::process::Child) -> Result<()> {
+    let Some(port) = target.port else {
+        return Ok(());
+    };
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(60) {
+        if tokio::net::TcpStream::connect(("localhost", port))
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+        if let Some(status) = child.try_wait()? {
+            bail!("the command exited ({status}) before port {port} opened");
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    output::note(&format!(
+        "Port {port} is not open after 60 seconds; sharing it anyway."
+    ));
+    Ok(())
+}
+
+fn control(value: serde_json::Value) -> Message {
+    Message::text(value.to_string())
+}
+
+fn frame(kind: u8, id: u32, payload: &[u8]) -> Message {
+    let mut bytes = Vec::with_capacity(5 + payload.len());
+    bytes.push(kind);
+    bytes.extend_from_slice(&id.to_be_bytes());
+    bytes.extend_from_slice(payload);
+    Message::binary(bytes)
+}
+
+fn root_cause(error: &reqwest::Error) -> String {
+    let mut source: &dyn std::error::Error = error;
+    while let Some(next) = source.source() {
+        source = next;
+    }
+    source.to_string()
+}

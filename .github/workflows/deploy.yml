@@ -1,0 +1,53 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Test and deploy
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+
+      - uses: voidzero-dev/setup-vp@v1.21.2
+        with:
+          node-version: "24"
+          cache: true
+
+      - run: vp run check
+
+      - run: vp run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Smoke test
+        run: |
+          url=$(curl -fsS --retry 10 --retry-delay 3 --retry-all-errors -X POST -D headers.txt https://beam.stoff.dev)
+          name=$(grep -i '^x-beam-name:' headers.txt | cut -d' ' -f2 | tr -d '\r')
+          key=$(grep -i '^x-beam-key:' headers.txt | cut -d' ' -f2 | tr -d '\r')
+          test "$(curl -fsS --retry 10 --retry-delay 3 --retry-all-errors "$url/smoke" -d beam-smoke)" = "ok"
+          curl -fsS -H "Authorization: Bearer $key" "https://beam.stoff.dev/$name/requests" | grep -q '"/smoke"'
+          curl -fsS -X DELETE -H "Authorization: Bearer $key" "https://beam.stoff.dev/$name"
