@@ -45,7 +45,11 @@ export class Beam extends DurableObject<Env> {
     const [client, server] = Object.values(pair);
     server.accept();
     server.binaryType = "arraybuffer";
-    this.forwarder?.close(4000, "Replaced by a newer connection");
+    const previous = this.forwarder;
+    if (previous) {
+      previous.close(4000, "Replaced by a newer connection");
+      this.forwarderGone(previous);
+    }
     this.forwarder = server;
     server.addEventListener("message", (event) => this.fromForwarder(server, event.data));
     server.addEventListener("close", () => this.forwarderGone(server));

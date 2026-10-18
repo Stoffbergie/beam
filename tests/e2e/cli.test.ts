@@ -1,4 +1,5 @@
 import { strict as assert } from "node:assert";
+import { request as httpRequest } from "node:http";
 import { test } from "vite-plus/test";
 import { baseUrl, ownerToken, runCli, sleep, startCli, startLocal, traffic, trafficSocket, uniqueName, waitFor, textOf } from "../helpers/beam";
 
@@ -73,6 +74,54 @@ test("a stopped local server gets a clear 502", async () => {
     assert.match(reply.text, /Nothing answered on localhost/);
   } finally {
     cli.stop();
+  }
+});
+
+test("replacing a beam closes its old response streams and WebSockets", async () => {
+  const firstLocal = await startLocal();
+  firstLocal.server.removeAllListeners("request");
+  firstLocal.server.on("request", (_request, response) => response.write("stream started"));
+  const secondLocal = await startLocal();
+  const name = uniqueName("streams");
+  const first = await startCli([String(firstLocal.port), "--name", name], { token: ownerToken });
+  const socket = trafficSocket(name, "/hmr");
+  let socketClosed = false;
+  socket.on("close", () => (socketClosed = true));
+  let body = "";
+  let responseClosed = false;
+  const request = httpRequest(`${baseUrl}/stream`, { headers: { host: `${name}.beam.test` } }, (response) => {
+    response.on("data", (chunk: Buffer) => (body += chunk.toString()));
+    response.on("end", () => (responseClosed = true));
+    response.on("error", () => (responseClosed = true));
+  });
+  request.on("error", () => (responseClosed = true));
+  let second: Awaited<ReturnType<typeof startCli>> | undefined;
+  try {
+    await new Promise((resolve, reject) => {
+      socket.on("open", resolve);
+      socket.on("error", reject);
+    });
+    request.end();
+    await waitFor(
+      () => (body === "stream started" ? true : undefined),
+      () => "The original response did not start streaming"
+    );
+    second = await startCli([String(secondLocal.port), "--name", name], { token: ownerToken });
+    first.stop();
+    await waitFor(
+      () => (responseClosed && socketClosed ? true : undefined),
+      () => `Replacement left old connections open: HTTP closed=${responseClosed}, WebSocket closed=${socketClosed}`,
+      2000
+    );
+    const reply = await traffic(name, "/replacement");
+    assert.equal(reply.status, 200, second.output());
+    assert.equal(JSON.parse(reply.text).host, `localhost:${secondLocal.port}`);
+  } finally {
+    request.destroy();
+    socket.terminate();
+    first.stop();
+    second?.stop();
+    await Promise.all([firstLocal.close(), secondLocal.close()]);
   }
 });
 
