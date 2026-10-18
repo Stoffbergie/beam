@@ -115,7 +115,12 @@ export async function startLocal(): Promise<Local> {
     });
   });
   const sockets = new WebSocketServer({ server });
-  sockets.on("connection", (socket) => socket.on("message", (data, binary) => socket.send(binary ? data : `echo:${textOf(data)}`)));
+  sockets.on("connection", (socket) => {
+    socket.on("message", (data, binary) => socket.send(binary ? data : `echo:${textOf(data)}`));
+    socket.on("error", (error) => {
+      throw error;
+    });
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as AddressInfo).port;
   return {

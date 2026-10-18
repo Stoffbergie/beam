@@ -238,7 +238,7 @@ async fn session(name: &str, token: &str, target: &Target) -> Result<()> {
                     }
                     "wsc" => {
                         if let Some((local, _)) = sockets.remove(&control.id) {
-                            let frame = control.code.map(|code| {
+                            let frame = control.code.filter(|code| sendable(*code)).map(|code| {
                                 tokio_tungstenite::tungstenite::protocol::CloseFrame {
                                     code: code.into(),
                                     reason: control.reason.unwrap_or_default().into(),
@@ -484,6 +484,10 @@ pub async fn wait_for_port(target: &Target, child: &mut tokio::process::Child) -
         "Port {port} is not open after 60 seconds; sharing it anyway."
     ));
     Ok(())
+}
+
+fn sendable(code: u16) -> bool {
+    matches!(code, 1000..=1003 | 1007..=1014 | 3000..=4999)
 }
 
 fn control(value: serde_json::Value) -> Message {

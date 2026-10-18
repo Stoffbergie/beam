@@ -3,21 +3,26 @@ use anyhow::{bail, Result};
 use base64::Engine;
 use std::time::Instant;
 
-const SKIPPED: [&str; 7] = [
+const SKIPPED: [&str; 11] = [
     "host",
     "content-length",
     "connection",
     "transfer-encoding",
     "keep-alive",
+    "upgrade",
+    "sec-websocket-key",
+    "sec-websocket-version",
+    "sec-websocket-extensions",
     "x-forwarded-host",
     "x-forwarded-for",
 ];
 
 pub async fn run(beam: &api::Beam, ids: Vec<u64>, target: &Target) -> Result<()> {
     let ids = if ids.is_empty() {
-        match api::list(beam).await?.first() {
+        let requests = api::list(beam).await?;
+        match requests.iter().find(|request| request.status != Some(101)) {
             Some(latest) => vec![latest.id],
-            None => bail!("{} has not received any requests yet", beam.name),
+            None => bail!("{} has not received any requests to replay yet", beam.name),
         }
     } else {
         ids

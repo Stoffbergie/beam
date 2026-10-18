@@ -17,6 +17,7 @@ pub struct Created {
 #[derive(Deserialize)]
 pub struct Summary {
     pub id: u64,
+    pub status: Option<u16>,
 }
 
 #[derive(Deserialize)]

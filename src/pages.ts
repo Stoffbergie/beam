@@ -145,7 +145,7 @@ const state = document.getElementById("state")
 const log = document.getElementById("log")
 const rows = new Map()
 const size = (bytes) => bytes < 1024 ? bytes + " B" : bytes < 1048576 ? (bytes / 1024).toFixed(1) + " KB" : (bytes / 1048576).toFixed(1) + " MB"
-const time = (iso) => new Date(iso).toLocaleTimeString()
+const time = (iso) => new Date(iso).toLocaleTimeString([], { hour12: false })
 const render = (request, prepend) => {
   let row = rows.get(request.id)
   if (!row) {

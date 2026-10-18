@@ -49,7 +49,14 @@ test("WebSockets pass through to the local server, so hot reload works", async (
     const reply = new Promise<string>((resolve) => socket.on("message", (data) => resolve(textOf(data))));
     socket.send("hi");
     assert.equal(await reply, "echo:hi");
-    socket.close();
+    socket.terminate();
+    await sleep(500);
+    const again = trafficSocket(name, "/hmr");
+    await new Promise((resolve, reject) => {
+      again.on("open", resolve);
+      again.on("error", reject);
+    });
+    again.close();
   } finally {
     cli.stop();
     await local.close();

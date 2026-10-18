@@ -301,7 +301,7 @@ export class Beam extends DurableObject<Env> {
     });
     server.addEventListener("close", (event) => {
       this.sockets.delete(stream);
-      this.forwarder?.send(JSON.stringify({ t: "wsc", id: stream, code: event.code, reason: event.reason }));
+      this.forwarder?.send(JSON.stringify({ t: "wsc", id: stream, code: validCloseCode(event.code), reason: event.reason }));
     });
     this.finish(id, 101, started);
     const headers = accepted.protocol ? { "Sec-WebSocket-Protocol": accepted.protocol } : undefined;
