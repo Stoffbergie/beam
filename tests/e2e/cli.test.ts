@@ -123,7 +123,7 @@ test("beam <port> -- <command> starts the app, waits for it, then shares it", as
   await probe.close();
   const name = uniqueName("run");
   const server = `require('http').createServer((q, r) => r.end('started-by-beam')).listen(${port}, '127.0.0.1')`;
-  const cli = await startCli([String(port), "--name", name, "--", "node", "-e", JSON.stringify(server)], { token: ownerToken });
+  const cli = await startCli([String(port), "--name", name, "--", "node", "-e", server], { token: ownerToken });
   try {
     const reply = await traffic(name, "/");
     assert.equal(reply.text, "started-by-beam", cli.output());
@@ -140,4 +140,19 @@ test("beam <port> -- <command> starts the app, waits for it, then shares it", as
     () => "stopped"
   );
   assert.equal(afterExit, "stopped");
+});
+
+test("a single quoted command after -- runs through the shell", async () => {
+  const probe = await startLocal();
+  const port = probe.port;
+  await probe.close();
+  const name = uniqueName("sh");
+  const line = `PORT=${port} node -e "require('http').createServer((q, r) => r.end('shell:' + process.env.PORT)).listen(process.env.PORT, '127.0.0.1')"`;
+  const cli = await startCli([String(port), "--name", name, "--", line], { token: ownerToken });
+  try {
+    const reply = await traffic(name, "/");
+    assert.equal(reply.text, `shell:${port}`, cli.output());
+  } finally {
+    cli.stop();
+  }
 });

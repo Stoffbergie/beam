@@ -131,9 +131,8 @@ async fn share(target: Option<String>, name: Option<String>, run: Vec<String>) -
     let target = forward::Target::parse(&target)?;
     let mut child = None;
     if !run.is_empty() {
-        let command = run.join(" ");
-        output::note(&format!("Starting {command}"));
-        let mut process = shell(&command).spawn()?;
+        output::note(&format!("Starting {}", run.join(" ")));
+        let mut process = command(&run).spawn()?;
         if let Err(error) = forward::wait_for_port(&target, &mut process).await {
             stop(&mut process).await;
             return Err(error);
@@ -160,15 +159,24 @@ async fn until_interrupted(task: impl std::future::Future<Output = Result<()>>) 
     }
 }
 
-fn shell(command: &str) -> tokio::process::Command {
-    let mut process = if cfg!(windows) {
-        let mut process = tokio::process::Command::new("cmd");
-        process.arg("/C").arg(command);
-        process
-    } else {
-        let mut process = tokio::process::Command::new("sh");
-        process.arg("-c").arg(command);
-        process
+fn command(run: &[String]) -> tokio::process::Command {
+    let mut process = match run {
+        [line] if cfg!(windows) => {
+            let mut process = tokio::process::Command::new("cmd");
+            process.arg("/C").arg(line);
+            process
+        }
+        [line] => {
+            let mut process = tokio::process::Command::new("sh");
+            process.arg("-c").arg(line);
+            process
+        }
+        [program, args @ ..] => {
+            let mut process = tokio::process::Command::new(program);
+            process.args(args);
+            process
+        }
+        [] => unreachable!("command is only built when one was given"),
     };
     process
         .stdin(std::process::Stdio::null())
