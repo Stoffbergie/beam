@@ -173,7 +173,7 @@ export class Beam extends DurableObject<Env> {
     if (message.t === "res" && pending) {
       clearTimeout(pending.timer);
       const status = message.status ?? 502;
-      if (status === 101 || status === 204 || status === 304 || status < 200) {
+      if (status === 101 || status === 204 || status === 205 || status === 304 || status < 200) {
         this.pending.delete(message.id);
         const headers = new Headers((message.headers ?? []).filter(([name]) => !hopByHop.has(name.toLowerCase())));
         pending.resolve(new Response(null, { status: status < 200 ? 502 : status, headers }));
