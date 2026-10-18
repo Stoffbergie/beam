@@ -265,7 +265,7 @@ async fn session(name: &str, token: &str, target: &Target, announced: &mut bool)
             Message::Close(frame) => {
                 if let Some(frame) = frame {
                     if u16::from(frame.code) == 4000 {
-                        break Err(anyhow!("another beam took over this name"));
+                        break Err(api::Refused(4000).into());
                     }
                 }
                 break Ok(());

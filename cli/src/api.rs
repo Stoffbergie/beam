@@ -49,6 +49,7 @@ impl std::fmt::Display for Refused {
                 formatter,
                 "beam refused the owner token (401); set it with beam config --token <token>"
             ),
+            4000 => write!(formatter, "another beam took over this name"),
             code => write!(formatter, "beam refused to connect ({code})"),
         }
     }

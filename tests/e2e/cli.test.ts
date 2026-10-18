@@ -76,6 +76,33 @@ test("a stopped local server gets a clear 502", async () => {
   }
 });
 
+test("a new beam takes over its name without the previous CLI reconnecting", async () => {
+  const firstLocal = await startLocal();
+  const secondLocal = await startLocal();
+  const name = uniqueName("replace");
+  const first = await startCli([String(firstLocal.port), "--name", name], { token: ownerToken });
+  let second: Awaited<ReturnType<typeof startCli>> | undefined;
+  try {
+    second = await startCli([String(secondLocal.port), "--name", name], { token: ownerToken });
+    await waitFor(
+      () => (first.process.exitCode !== null ? true : undefined),
+      () => `The replaced CLI did not exit\n${first.output()}`,
+      5000
+    );
+    assert.equal(first.process.exitCode, 1);
+    assert.match(first.output(), /another beam took over this name/);
+    assert.doesNotMatch(first.output(), /Reconnecting/);
+
+    const reply = await traffic(name, "/replacement");
+    assert.equal(reply.status, 200, second.output());
+    assert.equal(JSON.parse(reply.text).host, `localhost:${secondLocal.port}`);
+  } finally {
+    first.stop();
+    second?.stop();
+    await Promise.all([firstLocal.close(), secondLocal.close()]);
+  }
+});
+
 test("sharing needs the right owner token", async () => {
   const missing = await runCli(["3000"]);
   assert.equal(missing.code, 1);
