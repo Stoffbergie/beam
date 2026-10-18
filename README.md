@@ -151,7 +151,7 @@ cargo run --manifest-path cli/Cargo.toml -- --help
 | `vp test`      | End-to-end tests with the real Worker, the real CLI and local servers  |
 | `vp build`     | Build the Worker for deployment                                        |
 
-Pushing to `main` runs the checks, deploys to Cloudflare and smoke-tests production. Pushing a `v*` tag builds the CLI for macOS, Linux and Windows and updates the Homebrew formula.
+Pushing to `main` runs the checks, deploys to Cloudflare and smoke-tests production. Pushing a `v*` tag builds the CLI for macOS, Linux and Windows, and the Homebrew tap picks up the new release within the hour.
 
 ## License
 
