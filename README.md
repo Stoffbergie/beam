@@ -23,7 +23,7 @@ Run one command and your local server has a public https URL. Every request that
 
 ```console
 $ beam 3000 -- npm run dev
-https://app.stoffberg.dev → localhost:3000
+https://app.beam.stoff.dev → localhost:3000
 Watch in a browser: https://beam.stoff.dev/app#5Yc0…
 GET     200  /                    12ms
 POST    200  /api/stripe          31ms
@@ -79,7 +79,7 @@ curl -i -X POST https://beam.stoff.dev
 Send it anything. It records the request and replies `ok`:
 
 ```sh
-curl https://<name>.stoffberg.dev/stripe -d '{"paid":true}'
+curl https://<name>.beam.stoff.dev/stripe -d '{"paid":true}'
 ```
 
 Read what arrived, as JSON:
@@ -123,7 +123,7 @@ sequenceDiagram
     participant App as "localhost:3000"
 
     CLI->>Beam: "WebSocket (owner token)"
-    Visitor->>Beam: "GET https://app.stoffberg.dev/"
+    Visitor->>Beam: "GET https://app.beam.stoff.dev/"
     Beam->>Beam: "record request"
     Beam->>CLI: "request + body"
     CLI->>App: "GET /"
@@ -132,7 +132,7 @@ sequenceDiagram
     Beam-->>Visitor: "response"
 ```
 
-One Cloudflare Worker serves the website, the API and every `*.stoffberg.dev` URL. Each beam is a Durable Object that stores its latest requests in SQLite, streams them to anyone watching, and relays traffic to the CLI over one WebSocket. The CLI is a small Rust binary that forwards each request to your local server and streams the response back.
+One Cloudflare Worker serves the website, the API and every `*.beam.stoff.dev` URL. Each beam is a Durable Object that stores its latest requests in SQLite, streams them to anyone watching, and relays traffic to the CLI over one WebSocket. The CLI is a small Rust binary that forwards each request to your local server and streams the response back.
 
 ## Development
 

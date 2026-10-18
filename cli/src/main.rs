@@ -14,7 +14,7 @@ mod watch;
     version,
     about = "Your localhost, on the internet",
     args_conflicts_with_subcommands = true,
-    after_help = "Examples:\n  beam                           Catch requests and print them as they arrive\n  beam 3000                      Give localhost:3000 a public URL\n  beam 3000 --name app           Use a fixed URL like app.stoffberg.dev\n  beam 3000 -- npm run dev       Start the app, wait for the port, then share it\n  beam replay app --to 3000      Send the latest captured request again\n  beam watch app                 Print requests to an existing beam\n  beam config --token <token>    Save the owner token needed for forwarding\n\nSet BEAM_URL to use another server and BEAM_TOKEN to pass the token directly."
+    after_help = "Examples:\n  beam                           Catch requests and print them as they arrive\n  beam 3000                      Give localhost:3000 a public URL\n  beam 3000 --name app           Use a fixed URL like app.beam.stoff.dev\n  beam 3000 -- npm run dev       Start the app, wait for the port, then share it\n  beam replay app --to 3000      Send the latest captured request again\n  beam watch app                 Print requests to an existing beam\n  beam config --token <token>    Save the owner token needed for forwarding\n\nSet BEAM_URL to use another server and BEAM_TOKEN to pass the token directly."
 )]
 struct Cli {
     #[command(subcommand)]
