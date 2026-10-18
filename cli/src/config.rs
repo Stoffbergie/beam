@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::io::ErrorKind;
 use std::path::PathBuf;
 
@@ -8,16 +7,9 @@ use std::path::PathBuf;
 #[serde(default)]
 pub struct Config {
     pub token: Option<String>,
-    pub beams: BTreeMap<String, Saved>,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
-pub struct Saved {
-    pub url: String,
-    pub key: String,
-}
-
-pub fn load() -> Result<Config> {
+fn load() -> Result<Config> {
     let path = path()?;
     match std::fs::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes)
@@ -27,7 +19,7 @@ pub fn load() -> Result<Config> {
     }
 }
 
-pub fn save(config: &Config) -> Result<()> {
+fn save(config: &Config) -> Result<()> {
     let path = path()?;
     std::fs::create_dir_all(path.parent().context("config directory is missing")?)?;
     let partial = path.with_extension("json.part");
@@ -48,18 +40,6 @@ pub fn token() -> Result<Option<String>> {
         }
     }
     Ok(load()?.token)
-}
-
-pub fn remember(name: &str, url: &str, key: &str) -> Result<()> {
-    let mut config = load()?;
-    config.beams.insert(
-        name.to_string(),
-        Saved {
-            url: url.to_string(),
-            key: key.to_string(),
-        },
-    );
-    save(&config)
 }
 
 pub fn edit(token: Option<String>) -> Result<()> {

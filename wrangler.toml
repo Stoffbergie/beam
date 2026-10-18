@@ -28,12 +28,3 @@ class_name = "Beam"
 tag = "v1"
 new_sqlite_classes = ["Beam"]
 
-[[ratelimits]]
-name = "CREATES"
-namespace_id = "2002"
-simple = { limit = 30, period = 60 }
-
-[[ratelimits]]
-name = "LOOKUPS"
-namespace_id = "2003"
-simple = { limit = 300, period = 60 }

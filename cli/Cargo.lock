@@ -95,15 +95,15 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "beam"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
- "base64",
  "bytes",
  "clap",
  "dirs",
  "futures-channel",
  "futures-util",
+ "getrandom 0.4.3",
  "libc",
  "reqwest",
  "serde",
@@ -999,8 +999,6 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
- "serde",
- "serde_json",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

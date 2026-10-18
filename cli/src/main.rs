@@ -5,8 +5,6 @@ mod api;
 mod config;
 mod forward;
 mod output;
-mod replay;
-mod watch;
 
 #[derive(Parser)]
 #[command(
@@ -14,16 +12,17 @@ mod watch;
     version,
     about = "Your localhost, on the internet",
     args_conflicts_with_subcommands = true,
-    after_help = "Examples:\n  beam                           Catch requests and print them as they arrive\n  beam 3000                      Give localhost:3000 a public URL\n  beam 3000 --name app           Use a fixed URL like app.beam.stoff.dev\n  beam 3000 -- npm run dev       Start the app, wait for the port, then share it\n  beam replay app --to 3000      Send the latest captured request again\n  beam watch app                 Print requests to an existing beam\n  beam config --token <token>    Save the owner token needed for forwarding\n\nSet BEAM_URL to use another server and BEAM_TOKEN to pass the token directly."
+    subcommand_negates_reqs = true,
+    after_help = "Examples:\n  beam 3000                      Give localhost:3000 a public URL\n  beam 3000 --name app           Use a fixed URL like app.beam.stoff.dev\n  beam 3000 -- npm run dev       Start the app, wait for the port, then share it\n  beam config --token <token>    Save the owner token\n\nSet BEAM_URL to use another server and BEAM_TOKEN to pass the token directly.\nCatching webhooks? Use hook: https://hook.stoff.dev"
 )]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    #[arg(help = "Local port or URL to share; leave out to only catch requests")]
+    #[arg(required = true, help = "Local port or URL to share")]
     target: Option<String>,
 
-    #[arg(short, long, help = "Fixed name for the URL; needs the owner token")]
+    #[arg(short, long, help = "Fixed name for the URL instead of a random one")]
     name: Option<String>,
 
     #[arg(last = true, help = "Command to start before sharing, after --")]
@@ -32,33 +31,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    #[command(about = "Print requests to an existing beam as they arrive")]
-    Watch {
-        #[arg(help = "Beam name, URL, or watch link ending in #key")]
-        beam: String,
-    },
-    #[command(about = "Send captured requests to a local server again")]
-    Replay {
-        #[arg(help = "Beam name, URL, or watch link ending in #key")]
-        beam: String,
-        #[arg(help = "Request ids to replay; defaults to the latest request")]
-        ids: Vec<u64>,
-        #[arg(long, help = "Local port or URL to send them to")]
-        to: String,
-    },
-    #[command(about = "List beams created from this machine")]
-    Ls,
-    #[command(about = "Delete a beam and everything it recorded")]
-    Rm {
-        #[arg(help = "Beam name, URL, or watch link ending in #key")]
-        beam: String,
-    },
     #[command(about = "Show or set the owner token")]
     Config {
-        #[arg(
-            long,
-            help = "Owner token that allows forwarding and fixed names; empty to remove"
-        )]
+        #[arg(long, help = "Owner token that allows sharing; empty to remove")]
         token: Option<String>,
     },
 }
@@ -72,63 +47,22 @@ async fn main() {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    match cli.command {
-        Some(Command::Watch { beam }) => {
-            let beam = api::resolve(&beam)?;
-            output::note(&format!("Watching {}. Stop anytime: Ctrl+C", beam.name));
-            until_interrupted(watch::run(&beam)).await
-        }
-        Some(Command::Replay { beam, ids, to }) => {
-            replay::run(&api::resolve(&beam)?, ids, &forward::Target::parse(&to)?).await
-        }
-        Some(Command::Ls) => {
-            for (name, saved) in config::load()?.beams {
-                println!("{name:<10} {}", saved.url);
-            }
-            Ok(())
-        }
-        Some(Command::Rm { beam }) => {
-            let beam = api::resolve(&beam)?;
-            api::delete(&beam).await?;
-            let mut config = config::load()?;
-            config.beams.remove(&beam.name);
-            config::save(&config)?;
-            println!("deleted {}", beam.name);
-            Ok(())
-        }
-        Some(Command::Config { token }) => config::edit(token),
-        None => share(cli.target, cli.name, cli.run).await,
+    match (cli.command, cli.target) {
+        (Some(Command::Config { token }), _) => config::edit(token),
+        (None, Some(target)) => share(target, cli.name, cli.run).await,
+        (None, None) => unreachable!("clap requires a target"),
     }
 }
 
-async fn share(target: Option<String>, name: Option<String>, run: Vec<String>) -> Result<()> {
-    let token = config::token()?;
-    if name.is_some() && token.is_none() {
-        bail!("choosing a name needs the owner token; set it with beam config --token <token>");
-    }
-
-    let Some(target) = target else {
-        if !run.is_empty() {
-            bail!("give the port to share before --, like beam 3000 -- npm run dev");
-        }
-        let created = api::create(name.as_deref(), token.as_deref()).await?;
-        println!("{}", created.url);
-        output::note(&format!(
-            "Requests appear below. Watch in a browser: {}",
-            created.watch
-        ));
-        output::note("Stop anytime: Ctrl+C. The URL keeps catching for 7 days.");
-        let beam = api::Beam {
-            name: created.name,
-            credential: created.key,
-        };
-        return until_interrupted(watch::run(&beam)).await;
-    };
-
-    let Some(token) = token else {
-        bail!("forwarding needs the owner token; set it with beam config --token <token>, or run beam without a port to only catch requests");
+async fn share(target: String, name: Option<String>, run: Vec<String>) -> Result<()> {
+    let Some(token) = config::token()? else {
+        bail!("sharing needs the owner token; set it with beam config --token <token>. Catching webhooks? Use hook: https://hook.stoff.dev");
     };
     let target = forward::Target::parse(&target)?;
+    let name = match name {
+        Some(name) => name,
+        None => api::random_name()?,
+    };
     let mut child = None;
     if !run.is_empty() {
         output::note(&format!("Starting {}", run.join(" ")));
@@ -140,12 +74,7 @@ async fn share(target: Option<String>, name: Option<String>, run: Vec<String>) -
         child = Some(process);
     }
 
-    let created = api::create(name.as_deref(), Some(&token)).await?;
-    println!("{} → {}", created.url, target.display);
-    output::note(&format!("Watch in a browser: {}", created.watch));
-    output::note("Stop anytime: Ctrl+C");
-
-    let result = until_interrupted(forward::run(&created.name, &token, &target)).await;
+    let result = until_interrupted(forward::run(&name, &token, &target)).await;
     if let Some(mut child) = child {
         stop(&mut child).await;
     }

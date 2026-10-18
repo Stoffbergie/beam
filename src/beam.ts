@@ -2,45 +2,6 @@ import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./env";
 import { offlinePage } from "./pages";
 
-export type BeamMeta = {
-  name: string;
-  key: string;
-  owned: boolean;
-  createdAt: number;
-};
-
-export type RequestSummary = {
-  id: number;
-  at: string;
-  method: string;
-  path: string;
-  size: number;
-  status: number | null;
-  duration: number | null;
-  forwarded: boolean;
-};
-
-export type RequestDetail = RequestSummary & {
-  headers: Record<string, string>;
-  truncated: boolean;
-  body: string;
-  bodyEncoding: "utf8" | "base64";
-};
-
-type Row = {
-  id: number;
-  at: number;
-  method: string;
-  path: string;
-  headers: string;
-  body: ArrayBuffer | null;
-  size: number;
-  truncated: number;
-  status: number | null;
-  duration: number | null;
-  forwarded: number;
-};
-
 type Head = { status: number; headers: [string, string][] };
 
 type Pending = {
@@ -58,161 +19,53 @@ type Passthrough = {
   resolve?: (accepted: { protocol: string } | null) => void;
 };
 
-const ttlMs = 7 * 24 * 60 * 60 * 1000;
-const keepRequests = 100;
-const maxStoredBody = 1024 * 1024;
 const chunkSize = 256 * 1024;
 const responseTimeoutMs = 100_000;
 const frame = { requestBody: 1, responseBody: 2, socketMessage: 3 } as const;
 const hopByHop = new Set(["connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "te", "trailer", "content-length"]);
-const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
 export class Beam extends DurableObject<Env> {
   private forwarder?: WebSocket;
   private pending = new Map<number, Pending>();
   private sockets = new Map<number, Passthrough>();
   private nextStream = 0;
-  private lastBump = 0;
-
-  constructor(ctx: DurableObjectState, env: Env) {
-    super(ctx, env);
-    ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS requests (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      at INTEGER NOT NULL,
-      method TEXT NOT NULL,
-      path TEXT NOT NULL,
-      headers TEXT NOT NULL,
-      body BLOB,
-      size INTEGER NOT NULL,
-      truncated INTEGER NOT NULL,
-      status INTEGER,
-      duration INTEGER,
-      forwarded INTEGER NOT NULL
-    )`);
-  }
-
-  async create(name: string, owned: boolean): Promise<BeamMeta | null> {
-    const existing = await this.meta();
-    if (existing) return owned && existing.owned ? existing : null;
-    const meta: BeamMeta = { name, key: randomKey(), owned, createdAt: Date.now() };
-    await this.ctx.storage.put("meta", meta);
-    await this.bump(true);
-    return meta;
-  }
-
-  async meta(): Promise<BeamMeta | undefined> {
-    return this.ctx.storage.get<BeamMeta>("meta");
-  }
-
-  forwarding(): boolean {
-    return this.forwarder !== undefined;
-  }
-
-  async expiresAt(): Promise<number | null> {
-    return this.ctx.storage.getAlarm();
-  }
-
-  list(after: number, limit: number): RequestSummary[] {
-    const rows = this.ctx.storage.sql.exec<Row>("SELECT id, at, method, path, size, status, duration, forwarded FROM requests WHERE id > ? ORDER BY id DESC LIMIT ?", after, limit).toArray();
-    return rows.map(summary);
-  }
-
-  detail(id: number): RequestDetail | null {
-    const row = this.ctx.storage.sql.exec<Row>("SELECT * FROM requests WHERE id = ?", id).toArray()[0];
-    if (!row) return null;
-    const bytes = new Uint8Array(row.body ?? new ArrayBuffer(0));
-    let body: string;
-    let bodyEncoding: "utf8" | "base64" = "utf8";
-    try {
-      body = textDecoder.decode(bytes);
-    } catch {
-      body = toBase64(bytes);
-      bodyEncoding = "base64";
-    }
-    return { ...summary(row), headers: JSON.parse(row.headers) as Record<string, string>, truncated: row.truncated === 1, body, bodyEncoding };
-  }
-
-  async remove(): Promise<void> {
-    this.disconnectAll();
-    await this.ctx.storage.deleteAll();
-  }
 
   async alarm(): Promise<void> {
-    if (this.forwarder) {
-      await this.ctx.storage.setAlarm(Date.now() + ttlMs);
-      return;
-    }
-    this.disconnectAll();
     await this.ctx.storage.deleteAll();
   }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    if (url.hostname === "beam.internal") return this.openSocket(request, url.searchParams.get("role"));
+    if (url.hostname === "beam.internal") return this.attach(request, url.searchParams.get("url") ?? "");
     return this.traffic(request, url);
   }
 
-  async webSocketMessage(): Promise<void> {}
-
-  async webSocketClose(socket: WebSocket, code: number): Promise<void> {
-    socket.close(code === 1005 ? 1000 : code);
-  }
-
-  private async openSocket(request: Request, role: string | null): Promise<Response> {
+  private attach(request: Request, publicUrl: string): Response {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
+    server.accept();
+    server.binaryType = "arraybuffer";
+    this.forwarder?.close(4000, "Replaced by a newer connection");
+    this.forwarder = server;
+    server.addEventListener("message", (event) => this.fromForwarder(server, event.data));
+    server.addEventListener("close", () => this.forwarderGone(server));
+    server.addEventListener("error", () => this.forwarderGone(server));
+    server.send(JSON.stringify({ t: "hello", url: publicUrl }));
     const protocols = (request.headers.get("sec-websocket-protocol") ?? "").split(",").map((value) => value.trim());
     const headers = protocols.includes("beam") ? { "Sec-WebSocket-Protocol": "beam" } : undefined;
-
-    if (role === "forward") {
-      server.accept();
-      server.binaryType = "arraybuffer";
-      this.forwarder?.close(4000, "Replaced by a newer connection");
-      this.forwarder = server;
-      server.addEventListener("message", (event) => this.fromForwarder(server, event.data));
-      server.addEventListener("close", () => this.forwarderGone(server));
-      server.addEventListener("error", () => this.forwarderGone(server));
-      this.broadcast({ t: "forwarding", forwarding: true });
-    } else {
-      this.ctx.acceptWebSocket(server, ["watch"]);
-      server.send(JSON.stringify({ t: "hello", forwarding: this.forwarding() }));
-    }
-    await this.bump(true);
     return new Response(null, { status: 101, webSocket: client, headers });
   }
 
   private async traffic(request: Request, url: URL): Promise<Response> {
-    const meta = await this.meta();
-    if (!meta) return new Response("No beam here\n", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-    await this.bump(false);
-
-    const started = Date.now();
+    const forwarder = this.forwarder;
+    if (!forwarder) {
+      if ((request.headers.get("accept") ?? "").includes("text/html")) {
+        return new Response(offlinePage(url.hostname), { status: 503, headers: { "Content-Type": "text/html; charset=utf-8" } });
+      }
+      return new Response("This beam is offline\n", { status: 502, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    }
     const path = url.pathname + url.search;
-    const headers = Object.fromEntries([...request.headers].filter(([name]) => !name.startsWith("cf-") && name !== "x-forwarded-proto" && name !== "x-real-ip"));
-    const upgrade = request.headers.get("upgrade")?.toLowerCase() === "websocket";
-    const forwarder = meta.owned ? this.forwarder : undefined;
-
-    let captured: Promise<{ body: Uint8Array; size: number; truncated: boolean }>;
-    let forwardBody: ReadableStream<Uint8Array> | null = null;
-    if (request.body && forwarder && !upgrade) {
-      const [capture, forward] = request.body.tee();
-      captured = capture_(capture);
-      forwardBody = forward;
-    } else {
-      captured = capture_(request.body);
-    }
-
-    const id = this.record(request.method, path, headers, forwarder !== undefined);
-    if (!forwarder || upgrade) {
-      const body = await captured;
-      this.storeBody(id, body);
-      if (upgrade && forwarder) return this.passthrough(id, request, path, started);
-      const offline = meta.owned && (request.headers.get("accept") ?? "").includes("text/html");
-      const status = offline ? 503 : 200;
-      this.finish(id, status, started);
-      if (offline) return new Response(offlinePage(meta.name), { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
-      return new Response("ok\n", { status, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-    }
+    if (request.headers.get("upgrade")?.toLowerCase() === "websocket") return this.passthrough(request, path);
 
     const stream = ++this.nextStream;
     const response = new Promise<Head | Response>((resolve) => {
@@ -220,13 +73,9 @@ export class Beam extends DurableObject<Env> {
       this.pending.set(stream, { resolve, timer, streaming: false, chunks: [], done: false });
     });
     forwarder.send(JSON.stringify({ t: "req", id: stream, method: request.method, path, headers: forwardHeaders(request, url) }));
-    this.ctx.waitUntil(this.pump(forwarder, stream, forwardBody));
-    this.ctx.waitUntil(captured.then((body) => this.storeBody(id, body)));
-
+    this.ctx.waitUntil(this.pump(forwarder, stream, request.body));
     const head = await response;
-    const result = head instanceof Response ? head : this.streamedResponse(stream, head);
-    this.finish(id, result.status, started);
-    return result;
+    return head instanceof Response ? head : this.streamedResponse(stream, head);
   }
 
   private streamedResponse(stream: number, head: Head): Response {
@@ -265,7 +114,7 @@ export class Beam extends DurableObject<Env> {
     }
   }
 
-  private async passthrough(id: number, request: Request, path: string, started: number): Promise<Response> {
+  private async passthrough(request: Request, path: string): Promise<Response> {
     const forwarder = this.forwarder;
     if (!forwarder) return new Response("This beam is offline\n", { status: 502 });
     const stream = ++this.nextStream;
@@ -286,7 +135,6 @@ export class Beam extends DurableObject<Env> {
     });
     if (!accepted) {
       this.sockets.delete(stream);
-      this.finish(id, 502, started);
       return new Response("Your local server refused the WebSocket\n", { status: 502 });
     }
 
@@ -303,7 +151,6 @@ export class Beam extends DurableObject<Env> {
       this.sockets.delete(stream);
       this.forwarder?.send(JSON.stringify({ t: "wsc", id: stream, code: validCloseCode(event.code), reason: event.reason }));
     });
-    this.finish(id, 101, started);
     const headers = accepted.protocol ? { "Sec-WebSocket-Protocol": accepted.protocol } : undefined;
     return new Response(null, { status: 101, webSocket: client, headers });
   }
@@ -382,82 +229,7 @@ export class Beam extends DurableObject<Env> {
       entry.socket?.close(1001, "Beam disconnected");
     }
     this.sockets.clear();
-    this.broadcast({ t: "forwarding", forwarding: false });
   }
-
-  private disconnectAll(): void {
-    this.forwarder?.close(1000, "Beam deleted");
-    this.forwarderGone(this.forwarder as WebSocket);
-    for (const socket of this.ctx.getWebSockets("watch")) socket.close(1000, "Beam deleted");
-  }
-
-  private record(method: string, path: string, headers: Record<string, string>, forwarded: boolean): number {
-    const at = Date.now();
-    const id = this.ctx.storage.sql
-      .exec<{ id: number }>(
-        "INSERT INTO requests (at, method, path, headers, size, truncated, forwarded) VALUES (?, ?, ?, ?, 0, 0, ?) RETURNING id",
-        at,
-        method,
-        path,
-        JSON.stringify(headers),
-        forwarded ? 1 : 0
-      )
-      .one().id;
-    this.ctx.storage.sql.exec("DELETE FROM requests WHERE id <= ?", id - keepRequests);
-    this.broadcast({ t: "request", request: summary({ id, at, method, path, size: 0, status: null, duration: null, forwarded: forwarded ? 1 : 0 } as Row) });
-    return id;
-  }
-
-  private storeBody(id: number, captured: { body: Uint8Array; size: number; truncated: boolean }): void {
-    this.ctx.storage.sql.exec("UPDATE requests SET body = ?, size = ?, truncated = ? WHERE id = ?", captured.body, captured.size, captured.truncated ? 1 : 0, id);
-    this.broadcast({ t: "size", id, size: captured.size });
-  }
-
-  private finish(id: number, status: number, started: number): void {
-    const duration = Date.now() - started;
-    this.ctx.storage.sql.exec("UPDATE requests SET status = ?, duration = ? WHERE id = ?", status, duration, id);
-    this.broadcast({ t: "status", id, status, duration });
-  }
-
-  private broadcast(message: unknown): void {
-    const text = JSON.stringify(message);
-    for (const socket of this.ctx.getWebSockets("watch")) {
-      try {
-        socket.send(text);
-      } catch {
-        socket.close(1011, "Send failed");
-      }
-    }
-  }
-
-  private async bump(force: boolean): Promise<void> {
-    const now = Date.now();
-    if (!force && now - this.lastBump < 60 * 60 * 1000) return;
-    this.lastBump = now;
-    await this.ctx.storage.setAlarm(now + ttlMs);
-  }
-}
-
-async function capture_(body: ReadableStream<Uint8Array> | null): Promise<{ body: Uint8Array; size: number; truncated: boolean }> {
-  if (!body) return { body: new Uint8Array(0), size: 0, truncated: false };
-  const chunks: Uint8Array[] = [];
-  let stored = 0;
-  let size = 0;
-  for await (const chunk of body) {
-    size += chunk.byteLength;
-    if (stored < maxStoredBody) {
-      const part = chunk.subarray(0, maxStoredBody - stored);
-      chunks.push(part);
-      stored += part.byteLength;
-    }
-  }
-  const bytes = new Uint8Array(stored);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return { body: bytes, size, truncated: size > stored };
 }
 
 function forwardHeaders(request: Request, url: URL): [string, string][] {
@@ -469,19 +241,6 @@ function forwardHeaders(request: Request, url: URL): [string, string][] {
   if (address) headers.push(["x-forwarded-for", address]);
   if (request.headers.get("upgrade")) headers.push(["upgrade", request.headers.get("upgrade") ?? ""]);
   return headers;
-}
-
-function summary(row: Row): RequestSummary {
-  return {
-    id: row.id,
-    at: new Date(row.at).toISOString(),
-    method: row.method,
-    path: row.path,
-    size: row.size,
-    status: row.status,
-    duration: row.duration,
-    forwarded: row.forwarded === 1
-  };
 }
 
 function binaryFrame(type: number, stream: number, payload: Uint8Array): Uint8Array {
@@ -496,17 +255,4 @@ function binaryFrame(type: number, stream: number, payload: Uint8Array): Uint8Ar
 function validCloseCode(code: number | undefined): number {
   if (code === 1000 || (code !== undefined && code >= 3000 && code <= 4999)) return code;
   return 1000;
-}
-
-function randomKey(): string {
-  return toBase64(crypto.getRandomValues(new Uint8Array(18)))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-function toBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
 }

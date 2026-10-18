@@ -20,80 +20,44 @@ footer{margin-top:4rem}
 details{margin-top:2.5rem}
 summary{color:var(--muted);cursor:pointer}
 details p{margin-top:2rem}
-.log{margin-top:2rem;border-top:1px solid var(--line)}
-.row{display:grid;grid-template-columns:5.5rem 4.5rem minmax(0,1fr) 3.5rem 5rem;gap:1rem;padding:.35rem 0;border-bottom:1px solid var(--line);cursor:pointer;width:100%;background:none;border-left:0;border-right:0;border-top:0;color:inherit;font:inherit;text-align:left}
-.row span:nth-child(3){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.row .dim,.dim{color:var(--muted)}
-pre{margin:.5rem 0 1rem;padding:.75rem 0;overflow-x:auto;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--fg)}
-@media(max-width:600px){.commands{grid-template-columns:1fr;gap:0}.commands dd{margin-bottom:1rem}.row{grid-template-columns:4rem minmax(0,1fr) 3rem}.row span:nth-child(1),.row span:nth-child(5){display:none}}
+@media(max-width:600px){.commands{grid-template-columns:1fr;gap:0}.commands dd{margin-bottom:1rem}}
 :focus-visible{outline:2px solid var(--fg);outline-offset:3px}
 `;
 
 type Row = [command: string, label: string, description: string];
 type Section = { title: string; rows: Row[] };
 
-const HEADLINE = "Share a port. Catch a webhook.";
+const HEADLINE = "Share localhost in one command.";
 
 const AUTOMATION_GUIDANCE =
-  "Agents and automation: create catching URLs with curl and read what arrived as JSON, sending the X-Beam-Key value as a Bearer token. Never print, log or share a beam key or the owner token. Forwarding a local port needs the owner token, so only run beam <port> when the user has set it up with beam config --token. Resend captured requests with beam replay instead of rebuilding them. Delete the beams you created when the task is done.";
+  "Agents and automation: beam serves a local port on a public URL and needs the owner token, so only run beam <port> when the user has set it up with beam config --token. Never print, log or share the owner token. To catch or replay webhooks, use hook.stoff.dev instead.";
 
-function usage(origin: string, domain: string): Section[] {
+function usage(domain: string): Section[] {
   return [
     { title: "Install", rows: [["brew install stoffbergie/tap/beam", "", "Install the beam CLI with Homebrew on macOS or Linux."]] },
     {
       title: "Use",
       rows: [
-        ["beam 3000", "Share a port", `Give localhost:3000 a public https URL on ${domain}. WebSockets pass through, so hot reload works, and every request is recorded. Needs the owner token.`],
+        ["beam 3000", "Share a port", `Give localhost:3000 a public https URL on ${domain}. WebSockets pass through, so hot reload works.`],
         ["beam 3000 -- npm run dev", "Start and share", "Start the command, wait for the port to open, then share it. Stopping beam stops the app."],
-        ["beam", "Catch webhooks", "Create a URL that records every request sent to it and replies ok, and print each request as it arrives. Anyone can make one."],
-        [
-          "beam replay app --to 3000",
-          "Replay a webhook",
-          "Send the latest recorded request to a local port again, with its headers and body. Useful for webhooks that arrived while your server was down."
-        ],
-        ["beam ls", "Your beams", "List the beams created from this machine with their URLs."],
-        ["beam rm app", "Delete a beam", "Remove a beam and everything it recorded straight away."]
+        ["beam 3000 --name app", "Pick the URL", `Use a fixed URL like app.${domain} instead of a random one, and keep it every time you start beam with that name.`]
       ]
     },
     {
       title: "More",
       rows: [
-        ["beam 3000 --name app", "Pick the URL", `Use a fixed URL like app.${domain} and keep it every time you start beam with that name. Needs the owner token.`],
-        ["beam watch app", "Watch a beam", "Print requests to a beam created earlier as they arrive. The watch link it was created with shows the same thing live in a browser."],
-        ["beam replay app 12 15 --to http://localhost:8080", "Replay chosen requests", "Replay requests by id, in order, to a local port or any URL."],
-        ["beam config --token <token>", "Set the owner token", "Save the owner token that allows forwarding and fixed names on this machine."]
-      ]
-    },
-    {
-      title: "curl",
-      rows: [
-        [
-          `curl -i -X POST ${origin}`,
-          "Get a URL",
-          "Create a catching URL. The response has the URL, an X-Beam-Key header for reading what arrived and an X-Beam-Watch link for the browser. Add -H 'Accept: application/json' for JSON."
-        ],
-        [
-          `curl https://<name>.${domain}/stripe -d '{"paid":true}'`,
-          "Send it a webhook",
-          "Any method, path, header and body is recorded. Bodies are kept up to 1 MB each, and the latest 100 requests are kept."
-        ],
-        [
-          `curl -H 'Authorization: Bearer <key>' ${origin}/<name>`,
-          "See what arrived",
-          "JSON with the URL, whether it is forwarding, when it expires and the latest requests. Add /requests/<id> for one request with its headers and body."
-        ],
-        [`curl -X DELETE -H 'Authorization: Bearer <key>' ${origin}/<name>`, "Delete a beam", "Remove the URL and everything it recorded."]
+        ["beam config --token <token>", "Set the owner token", "beam only serves the owner's machines. Save the owner token once on each machine."],
+        ["beam http://127.0.0.1:8080", "Share any local URL", "Share a host and port other than localhost, or a local https server."]
       ]
     }
   ];
 }
 
-const LIMITS =
-  "Beams last 7 days after their last request or connection. Each keeps its latest 100 requests with bodies up to 1 MB. Errors are plain text: 401 missing key, 403 owner only, 404 unknown beam, 429 too many requests. A forwarded request waits up to 100 seconds for your server.";
+const LIMITS = "A URL works while beam is running and shows an offline page when it stops. A request waits up to 100 seconds for your server. Catching webhooks without a server? Use hook.stoff.dev.";
 
-export function homeText(origin: string, domain: string): string {
+export function homeText(domain: string): string {
   const lines = [`beam: ${TAGLINE.toLowerCase()}`, "", AUTOMATION_GUIDANCE, ""];
-  for (const section of usage(origin, domain)) {
+  for (const section of usage(domain)) {
     lines.push(section.title.toUpperCase());
     const width = Math.max(...section.rows.map(([command]) => command.length));
     for (const [command, , description] of section.rows) lines.push(`  ${command.padEnd(width)}  # ${description}`);
@@ -104,7 +68,7 @@ export function homeText(origin: string, domain: string): string {
 }
 
 export function homePage(origin: string, domain: string): string {
-  const sections = usage(origin, domain).map((section) => {
+  const sections = usage(domain).map((section) => {
     const rows = section.rows.map(([command, label, description]) => `<dt>${escapeHtml(command)}</dt><dd>${escapeHtml(label)}<span hidden> ${escapeHtml(description)}</span></dd>`).join("");
     return `<h2>${section.title}</h2><dl class="commands">${rows}</dl>`;
   });
@@ -117,7 +81,7 @@ ${sections.slice(0, 2).join("")}
 <footer><p><a href="${SOURCE_URL}">Source</a></p></footer>
 <script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@type": "WebSite", name: "beam", url: `${origin}/`, description: TAGLINE })}</script>`,
     {
-      description: `${TAGLINE} Share a local port with a public URL, or catch and replay webhooks. No accounts.`,
+      description: `${TAGLINE} Share a local port with a public https URL, WebSockets and all.`,
       url: `${origin}/`,
       image: `${origin}/social/beam.png`,
       index: true
@@ -125,91 +89,13 @@ ${sections.slice(0, 2).join("")}
   );
 }
 
-export function viewerPage(name: string, domain: string): string {
-  const url = `https://${name}.${domain}`;
-  return layout(
-    `${name} · beam`,
-    `<h1>${escapeHtml(url)}</h1>
-<p id="state">Connecting…</p>
-<div class="log" id="log"></div>
-<script>${VIEWER_SCRIPT.replace("__NAME__", JSON.stringify(name))}</script>`,
-    { description: "Requests to a beam, live." }
-  );
-}
-
-export function offlinePage(name: string): string {
-  return layout(`${name} · beam`, `<h1>This beam is offline</h1>\n<p>Nothing is forwarding to it right now. Try again in a moment.</p>`, { description: "This beam is offline." });
+export function offlinePage(host: string): string {
+  return layout(`${host} · beam`, `<h1>This beam is offline</h1>\n<p>Nothing is forwarding to it right now. Try again in a moment.</p>`, { description: "This beam is offline." });
 }
 
 export function notFoundPage(): string {
   return layout("Not found · beam", `<h1>Not found</h1>\n<p>Nothing is beaming here.</p>`, { description: "Nothing is beaming here." });
 }
-
-const VIEWER_SCRIPT = `
-const name = __NAME__
-const key = location.hash.slice(1)
-const state = document.getElementById("state")
-const log = document.getElementById("log")
-const rows = new Map()
-const size = (bytes) => bytes < 1024 ? bytes + " B" : bytes < 1048576 ? (bytes / 1024).toFixed(1) + " KB" : (bytes / 1048576).toFixed(1) + " MB"
-const time = (iso) => new Date(iso).toLocaleTimeString([], { hour12: false })
-const render = (request, prepend) => {
-  let row = rows.get(request.id)
-  if (!row) {
-    row = document.createElement("button")
-    row.className = "row"
-    row.innerHTML = "<span class=dim></span><span></span><span></span><span class=dim></span><span class=dim></span>"
-    row.addEventListener("click", () => toggle(request.id, row))
-    rows.set(request.id, row)
-    if (prepend) log.prepend(row)
-    else log.append(row)
-  }
-  const cells = row.children
-  cells[0].textContent = time(request.at)
-  cells[1].textContent = request.method
-  cells[2].textContent = request.path
-  cells[3].textContent = request.status ?? "…"
-  cells[4].textContent = size(request.size)
-}
-const toggle = async (id, row) => {
-  const open = row.nextElementSibling
-  if (open && open.tagName === "PRE") return open.remove()
-  const pre = document.createElement("pre")
-  pre.textContent = "Loading…"
-  row.after(pre)
-  const response = await fetch("/" + name + "/requests/" + id, { headers: { Authorization: "Bearer " + key } })
-  const detail = await response.json()
-  let body = detail.bodyEncoding === "base64" ? "(binary, " + size(detail.size) + ")" : detail.body
-  try { body = JSON.stringify(JSON.parse(body), null, 2) } catch {}
-  const headers = Object.entries(detail.headers).map(([k, v]) => k + ": " + v).join("\\n")
-  pre.textContent = detail.method + " " + detail.path + "\\n" + headers + (body ? "\\n\\n" + body : "") + (detail.truncated ? "\\n\\n(body cut at 1 MB)" : "")
-}
-const describe = (forwarding) => {
-  state.textContent = forwarding ? "Forwarding to a local server. New requests appear below." : "Catching. Send requests to the URL above; they appear below."
-}
-const start = async () => {
-  if (!key) return void (state.textContent = "This link is missing its key. Use the full link with #key at the end.")
-  const response = await fetch("/" + name, { headers: { Authorization: "Bearer " + key } })
-  if (!response.ok) return void (state.textContent = response.status === 401 ? "That key does not match this beam." : "This beam does not exist or has expired.")
-  const beam = await response.json()
-  describe(beam.forwarding)
-  beam.requests.forEach((request) => render(request, false))
-  const connect = () => {
-    const socket = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/" + name + "/connect", ["beam", key])
-    socket.onmessage = (event) => {
-      const message = JSON.parse(event.data)
-      if (message.t === "request") render(message.request, true)
-      if (message.t === "hello" || message.t === "forwarding") describe(message.forwarding)
-      const row = rows.get(message.id)
-      if (row && message.t === "status") row.children[3].textContent = message.status
-      if (row && message.t === "size") row.children[4].textContent = size(message.size)
-    }
-    socket.onclose = () => setTimeout(connect, 2000)
-  }
-  connect()
-}
-start()
-`;
 
 function layout(title: string, body: string, metadata: { description: string; url?: string; image?: string; index?: boolean }): string {
   const social =
