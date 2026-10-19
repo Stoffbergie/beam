@@ -244,7 +244,7 @@ export class Beam extends DurableObject<Env> {
   private push(stream: number, chunk: Uint8Array): void {
     const entry = this.pending.get(stream);
     if (!entry?.streaming) return;
-    entry.chunks.push(chunk.slice());
+    entry.chunks.push(chunk);
     entry.wake?.();
   }
 
