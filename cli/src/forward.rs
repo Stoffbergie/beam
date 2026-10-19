@@ -40,7 +40,6 @@ const SKIPPED_SOCKET: [&str; 8] = [
     "transfer-encoding",
 ];
 
-#[derive(Clone)]
 pub struct Target {
     pub http: String,
     pub socket: String,
@@ -127,12 +126,13 @@ enum Outgoing<'a> {
     SocketClosed { id: u32, code: u16, reason: &'a str },
 }
 
-pub async fn run(name: &str, token: &str, target: &Target) -> Result<()> {
+pub async fn run(name: &str, token: &str, target: Target) -> Result<()> {
+    let target = Arc::new(target);
     let mut delay = 1;
     let mut announced = false;
     loop {
         let started = Instant::now();
-        match session(name, token, target, &mut announced).await {
+        match session(name, token, &target, &mut announced).await {
             Err(error) if error.downcast_ref::<api::Refused>().is_some() => return Err(error),
             Err(error) => output::note(&format!("Disconnected: {error}. Reconnecting…")),
             Ok(()) => output::note("Disconnected. Reconnecting…"),
@@ -145,7 +145,12 @@ pub async fn run(name: &str, token: &str, target: &Target) -> Result<()> {
     }
 }
 
-async fn session(name: &str, token: &str, target: &Target, announced: &mut bool) -> Result<()> {
+async fn session(
+    name: &str,
+    token: &str,
+    target: &Arc<Target>,
+    announced: &mut bool,
+) -> Result<()> {
     let mut request = api::socket_url(name).into_client_request()?;
     request.headers_mut().insert(
         "Authorization",
@@ -183,7 +188,6 @@ async fn session(name: &str, token: &str, target: &Target, announced: &mut bool)
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
-    let target = Arc::new(target.clone());
     let mut bodies: HashMap<u32, mpsc::Sender<Result<Bytes, std::io::Error>>> = HashMap::new();
     let mut sockets: HashMap<u32, (Outbox, AbortHandle)> = HashMap::new();
     let mut tasks: HashMap<u32, AbortHandle> = HashMap::new();
