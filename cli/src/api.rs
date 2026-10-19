@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 const DEFAULT_URL: &str = "https://beam.stoff.dev";
 
 pub fn base_url() -> String {
@@ -38,7 +40,11 @@ pub fn random_name() -> anyhow::Result<String> {
 pub fn connection_token() -> anyhow::Result<String> {
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes).map_err(|error| anyhow::anyhow!("{error}"))?;
-    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+    let mut token = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(token, "{byte:02x}")?;
+    }
+    Ok(token)
 }
 
 #[derive(Debug)]
