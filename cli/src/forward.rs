@@ -87,13 +87,17 @@ impl Target {
 }
 
 #[derive(Deserialize)]
+struct MethodText<'a>(#[serde(borrow)] Cow<'a, str>);
+
+#[derive(Deserialize)]
 struct Control<'a> {
     #[serde(borrow)]
     t: Cow<'a, str>,
     #[serde(default)]
     id: u32,
     url: Option<String>,
-    method: Option<String>,
+    #[serde(borrow)]
+    method: Option<MethodText<'a>>,
     #[serde(rename = "hasBody")]
     has_body: Option<bool>,
     path: Option<String>,
@@ -224,7 +228,17 @@ async fn session(
                 };
                 match control.t.as_ref() {
                     "req" => {
-                        let method = control.method.unwrap_or_else(|| "GET".to_string());
+                        let method = control
+                            .method
+                            .map(|method| method.0)
+                            .unwrap_or(Cow::Borrowed("GET"));
+                        let Ok(method) = reqwest::Method::from_bytes(method.as_bytes()) else {
+                            let _ = outbox.unbounded_send(self::control(Outgoing::Error {
+                                id: control.id,
+                                message: "Unsupported method\n",
+                            }));
+                            continue;
+                        };
                         let headers = control.headers.unwrap_or_default();
                         let length = headers
                             .iter()
@@ -337,25 +351,18 @@ async fn proxy(
     client: reqwest::Client,
     target: Arc<Target>,
     id: u32,
-    method: String,
+    method: reqwest::Method,
     path: String,
     headers: Vec<(String, String)>,
     body: Option<mpsc::Receiver<Result<Bytes, std::io::Error>>>,
     outbox: Outbox,
 ) {
     let started = Instant::now();
-    let Ok(verb) = reqwest::Method::from_bytes(method.as_bytes()) else {
-        let _ = outbox.unbounded_send(control(Outgoing::Error {
-            id,
-            message: "Unsupported method\n",
-        }));
-        return;
-    };
     let length = headers
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
         .and_then(|(_, value)| value.parse::<usize>().ok());
-    let mut request = client.request(verb, format!("{}{}", target.http, path));
+    let mut request = client.request(method.clone(), format!("{}{}", target.http, path));
     for (name, value) in headers {
         if SKIPPED_REQUEST
             .iter()
@@ -404,7 +411,7 @@ async fn proxy(
                 message: &message,
             }));
             output::request(
-                &method,
+                method.as_str(),
                 &path,
                 502,
                 format_args!("nothing answered on {}", target.display),
@@ -440,7 +447,12 @@ async fn proxy(
     if !matches!(status, 204 | 205 | 304) {
         let _ = outbox.unbounded_send(control(Outgoing::End { id }));
     }
-    output::request(&method, &path, status, output::duration(started.elapsed()));
+    output::request(
+        method.as_str(),
+        &path,
+        status,
+        output::duration(started.elapsed()),
+    );
 }
 
 async fn passthrough(

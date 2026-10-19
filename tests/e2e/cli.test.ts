@@ -37,6 +37,12 @@ test("beam <port> puts a local server online without token setup", async () => {
     assert.equal(echoed.forwardedHost, `${name}.beam.test`);
     assert.equal(local.received.find((request) => request.url === "/hello?x=1")?.headers["x-message"], message);
 
+    for (const method of ["OPTIONS", "PATCH", "PROPFIND"]) {
+      const reply = await traffic(name, "/method", { method });
+      assert.equal(reply.status, 200);
+      assert.equal(JSON.parse(reply.text).method, method);
+    }
+
     for (const body of ["payload", "é-😀".repeat(100_000)]) {
       const post = await traffic(name, "/submit", { method: "POST", headers: { "content-type": "text/plain" }, body });
       assert.equal(JSON.parse(post.text).body, body);
