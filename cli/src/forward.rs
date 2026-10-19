@@ -524,10 +524,10 @@ fn frame(kind: u8, id: u32, payload: &[u8]) -> Message {
     Message::binary(bytes)
 }
 
-fn root_cause(error: &reqwest::Error) -> String {
+fn root_cause(error: &reqwest::Error) -> &dyn std::error::Error {
     let mut source: &dyn std::error::Error = error;
     while let Some(next) = source.source() {
         source = next;
     }
-    source.to_string()
+    source
 }
