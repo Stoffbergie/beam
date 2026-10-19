@@ -1,5 +1,6 @@
 const SOURCE_URL = "https://github.com/Stoffbergie/beam";
 const TAGLINE = "Share local servers through public HTTPS URLs.";
+const HTML_ENTITIES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
 const STYLE = `
 :root{--bg:#fafafa;--fg:#171717;--muted:#737373;--line:#e5e5e5;color-scheme:light dark}
@@ -134,5 +135,5 @@ ${body}
 }
 
 function escapeHtml(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  return value.replace(/[&<>"']/g, (character) => HTML_ENTITIES[character]);
 }
