@@ -76,7 +76,7 @@ export class Beam extends DurableObject<Env> {
       const timer = setTimeout(() => this.fail(stream, 504, "Your local server took too long to answer\n"), responseTimeoutMs);
       this.pending.set(stream, { resolve, timer, streaming: false, chunks: [], done: false });
     });
-    forwarder.send(JSON.stringify({ t: "req", id: stream, method: request.method, path, headers: forwardHeaders(request, url) }));
+    forwarder.send(JSON.stringify({ t: "req", id: stream, method: request.method, path, headers: forwardHeaders(request, url), hasBody: request.body !== null }));
     this.ctx.waitUntil(this.pump(forwarder, stream, request.body));
     const head = await response;
     return head instanceof Response ? head : this.streamedResponse(stream, head);

@@ -91,6 +91,8 @@ struct Control {
     id: u32,
     url: Option<String>,
     method: Option<String>,
+    #[serde(rename = "hasBody")]
+    has_body: Option<bool>,
     path: Option<String>,
     headers: Option<Vec<(String, String)>>,
     data: Option<String>,
@@ -198,10 +200,12 @@ async fn session(name: &str, token: &str, target: &Target, announced: &mut bool)
                             .iter()
                             .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
                             .and_then(|(_, value)| value.parse::<u64>().ok());
-                        let has_body = length.map(|length| length > 0).unwrap_or(!matches!(
-                            method.as_str(),
-                            "GET" | "HEAD" | "OPTIONS" | "DELETE"
-                        ));
+                        let has_body = control.has_body.unwrap_or_else(|| {
+                            length.map(|length| length > 0).unwrap_or(!matches!(
+                                method.as_str(),
+                                "GET" | "HEAD" | "OPTIONS" | "DELETE"
+                            ))
+                        });
                         let (sender, receiver) = mpsc::channel(16);
                         if has_body {
                             bodies.insert(control.id, sender);
