@@ -88,9 +88,7 @@ export function offlinePage(host: string): string {
   return layout(`${host} · beam`, `<h1>This beam is offline</h1>\n<p>Nothing is forwarding to it right now. Try again in a moment.</p>`, { description: "This beam is offline." });
 }
 
-export function notFoundPage(): string {
-  return layout("Not found · beam", `<h1>Not found</h1>\n<p>Nothing is beaming here.</p>`, { description: "Nothing is beaming here." });
-}
+export const notFoundPage = layout("Not found · beam", `<h1>Not found</h1>\n<p>Nothing is beaming here.</p>`, { description: "Nothing is beaming here." });
 
 function layout(title: string, body: string, metadata: { description: string; url?: string; image?: string; index?: boolean }): string {
   const social =

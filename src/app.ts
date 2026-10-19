@@ -38,7 +38,7 @@ app.get("/:name/connect", async (c) => {
   return c.env.BEAMS.getByName(name).fetch(new Request(`https://beam.internal/connect?url=${publicUrl}`, c.req.raw));
 });
 
-app.notFound((c) => (wantsHtml(c.req.raw.headers) ? c.html(notFoundPage(), 404) : text("Not found\n", 404)));
+app.notFound((c) => (wantsHtml(c.req.raw.headers) ? c.html(notFoundPage, 404) : text("Not found\n", 404)));
 
 function wantsHtml(headers: Headers): boolean {
   const crawler = /WhatsApp|facebookexternalhit|Facebot|meta-externalagent|Twitterbot|LinkedInBot|Slackbot|Discordbot|TelegramBot|Googlebot|bingbot/i;
