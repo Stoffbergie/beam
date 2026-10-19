@@ -6,6 +6,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::task::AbortHandle;
 use tokio_tungstenite::tungstenite::{
@@ -161,6 +162,7 @@ async fn session(name: &str, token: &str, target: &Target, announced: &mut bool)
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
+    let target = Arc::new(target.clone());
     let mut bodies: HashMap<u32, mpsc::Sender<Result<Bytes, std::io::Error>>> = HashMap::new();
     let mut sockets: HashMap<u32, (Outbox, AbortHandle)> = HashMap::new();
     let mut tasks: HashMap<u32, AbortHandle> = HashMap::new();
@@ -302,7 +304,7 @@ async fn session(name: &str, token: &str, target: &Target, announced: &mut bool)
 #[allow(clippy::too_many_arguments)]
 async fn proxy(
     client: reqwest::Client,
-    target: Target,
+    target: Arc<Target>,
     id: u32,
     method: String,
     path: String,
@@ -402,7 +404,7 @@ async fn proxy(
 }
 
 async fn passthrough(
-    target: Target,
+    target: Arc<Target>,
     id: u32,
     path: String,
     headers: Vec<(String, String)>,
