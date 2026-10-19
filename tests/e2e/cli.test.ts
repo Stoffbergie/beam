@@ -37,6 +37,32 @@ test("beam <port> puts a local server online without token setup", async () => {
   }
 });
 
+test("large binary downloads arrive intact across response chunks", async () => {
+  const local = await startLocal();
+  const payload = Buffer.alloc(4 * 1024 * 1024);
+  for (let index = 0; index < payload.length; index++) payload[index] = index % 251;
+  local.server.removeAllListeners("request");
+  local.server.on("request", (_request, response) => response.end(payload));
+  const name = uniqueName("download");
+  const cli = await startCli([String(local.port), "--name", name]);
+  try {
+    const downloaded = await new Promise<Buffer>((resolve, reject) => {
+      const request = httpRequest(`${baseUrl}/download`, { headers: { host: `${name}.beam.test` } }, (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.on("end", () => resolve(Buffer.concat(chunks)));
+        response.on("error", reject);
+      });
+      request.on("error", reject);
+      request.end();
+    });
+    assert.deepEqual(downloaded, payload);
+  } finally {
+    cli.stop();
+    await local.close();
+  }
+});
+
 test("WebSockets pass through to the local server, so hot reload works", async () => {
   const local = await startLocal();
   const name = uniqueName("ws");
