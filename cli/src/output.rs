@@ -21,10 +21,7 @@ pub fn note(message: &str) {
     eprintln!("{}", dim(message));
 }
 
-pub fn request(method: &str, path: &str, status: Option<u16>, detail: &str) {
-    let status = status
-        .map(|code| code.to_string())
-        .unwrap_or_else(|| "…".to_string());
+pub fn request(method: &str, path: &str, status: u16, detail: &str) {
     println!("{method:<7} {status:<4} {path} {}", dim(detail));
 }
 

@@ -404,7 +404,7 @@ async fn proxy(
             output::request(
                 &method,
                 &path,
-                Some(502),
+                502,
                 &format!("nothing answered on {}", target.display),
             );
             return;
@@ -446,12 +446,7 @@ async fn proxy(
         }
     }
     let _ = outbox.unbounded_send(control(Outgoing::End { id }));
-    output::request(
-        &method,
-        &path,
-        Some(status),
-        &output::duration(started.elapsed()),
-    );
+    output::request(&method, &path, status, &output::duration(started.elapsed()));
 }
 
 async fn passthrough(
@@ -488,7 +483,7 @@ async fn passthrough(
             output::request(
                 "WS",
                 &path,
-                Some(502),
+                502,
                 &format!("nothing answered on {}", target.display),
             );
             return fail(&outbox);
@@ -500,7 +495,7 @@ async fn passthrough(
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
     let _ = outbox.unbounded_send(control(Outgoing::SocketReady { id, protocol }));
-    output::request("WS", &path, Some(101), "connected");
+    output::request("WS", &path, 101, "connected");
 
     let (mut local_sink, mut local_stream) = socket.split();
     loop {
