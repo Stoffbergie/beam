@@ -134,14 +134,11 @@ async fn session(name: &str, token: &str, target: &Target, announced: &mut bool)
         Err(error) => return Err(error.into()),
     };
     let (mut sink, mut stream) = socket.split();
-    let (outbox, mut inbox) = mpsc::unbounded::<Message>();
+    let (outbox, inbox) = mpsc::unbounded::<Message>();
 
     let writer = tokio::spawn(async move {
-        while let Some(message) = inbox.next().await {
-            if sink.send(message).await.is_err() {
-                break;
-            }
-        }
+        let mut messages = inbox.map(Ok);
+        let _ = sink.send_all(&mut messages).await;
     });
     let pinger = {
         let outbox = outbox.clone();
