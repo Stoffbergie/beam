@@ -79,7 +79,10 @@ export class Beam extends DurableObject<Env> {
 
     const stream = ++this.nextStream;
     const response = new Promise<Head | Response>((resolve) => {
-      const timer = setTimeout(() => this.fail(stream, 504, "Your local server took too long to answer\n"), responseTimeoutMs);
+      const timer = setTimeout(() => {
+        if (forwarder.readyState === WebSocket.OPEN) forwarder.send(JSON.stringify({ t: "cancel", id: stream }));
+        this.fail(stream, 504, "Your local server took too long to answer\n");
+      }, responseTimeoutMs);
       this.pending.set(stream, { resolve, timer, streaming: false, chunks: [], done: false });
     });
     forwarder.send(JSON.stringify({ t: "req", id: stream, method: request.method, path, headers: forwardHeaders(request, url), hasBody: request.body !== null }));
