@@ -85,8 +85,8 @@ export class Beam extends DurableObject<Env> {
       }, responseTimeoutMs);
       this.pending.set(stream, { resolve, timer, streaming: false, chunks: [], done: false });
     });
-    forwarder.send(JSON.stringify({ t: "req", id: stream, method: request.method, path, headers: forwardHeaders(request, url), hasBody: request.body !== null }));
     const needsBodyEnd = request.body !== null || request.headers.has("content-length") || !bodylessMethods.has(request.method);
+    forwarder.send(JSON.stringify({ t: "req", id: stream, method: request.method, path, headers: forwardHeaders(request, url), hasBody: needsBodyEnd ? request.body !== null : undefined }));
     if (needsBodyEnd) this.ctx.waitUntil(this.pump(forwarder, stream, request.body));
     const head = await response;
     return head instanceof Response ? head : this.streamedResponse(stream, head, forwarder, request.signal);
