@@ -21,12 +21,13 @@ const RESPONSE_BODY: u8 = 2;
 const SOCKET_MESSAGE: u8 = 3;
 const CHUNK: usize = 256 * 1024;
 const BUFFERED_BODY: usize = 32 * 1024 * 1024;
-const SKIPPED_REQUEST: [&str; 5] = [
+const SKIPPED_REQUEST: [&str; 6] = [
     "host",
     "connection",
     "keep-alive",
     "transfer-encoding",
     "upgrade",
+    "content-length",
 ];
 const SKIPPED_SOCKET: [&str; 8] = [
     "host",
@@ -337,8 +338,10 @@ async fn proxy(
         .and_then(|(_, value)| value.parse::<usize>().ok());
     let mut request = client.request(verb, format!("{}{}", target.http, path));
     for (name, value) in &headers {
-        let lower = name.to_ascii_lowercase();
-        if SKIPPED_REQUEST.contains(&lower.as_str()) || lower == "content-length" {
+        if SKIPPED_REQUEST
+            .iter()
+            .any(|skipped| name.eq_ignore_ascii_case(skipped))
+        {
             continue;
         }
         request = request.header(name, value);
@@ -432,7 +435,10 @@ async fn passthrough(
         return fail(&outbox);
     };
     for (name, value) in &headers {
-        if SKIPPED_SOCKET.contains(&name.to_ascii_lowercase().as_str()) {
+        if SKIPPED_SOCKET
+            .iter()
+            .any(|skipped| name.eq_ignore_ascii_case(skipped))
+        {
             continue;
         }
         if let (Ok(name), Ok(value)) = (
