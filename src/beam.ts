@@ -272,7 +272,8 @@ function forwardHeaders(request: Request, url: URL): [string, string][] {
   headers.push(["x-forwarded-host", url.host], ["x-forwarded-proto", "https"]);
   const address = request.headers.get("cf-connecting-ip");
   if (address) headers.push(["x-forwarded-for", address]);
-  if (request.headers.get("upgrade")) headers.push(["upgrade", request.headers.get("upgrade") ?? ""]);
+  const upgrade = request.headers.get("upgrade");
+  if (upgrade) headers.push(["upgrade", upgrade]);
   return headers;
 }
 
