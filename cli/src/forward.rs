@@ -248,6 +248,9 @@ async fn session(name: &str, token: &str, target: &Target, announced: &mut bool)
                         if let Some(task) = tasks.remove(&control.id) {
                             task.abort();
                         }
+                        if let Some((_, task)) = sockets.remove(&control.id) {
+                            task.abort();
+                        }
                     }
                     "ws" => {
                         let (local, receiver) = mpsc::unbounded::<Message>();
