@@ -23,14 +23,14 @@ struct Cli {
     run: Vec<String>,
 }
 
-#[tokio::main]
-async fn main() {
-    if let Err(error) = run(Cli::parse()).await {
+fn main() {
+    if let Err(error) = run(Cli::parse()) {
         eprintln!("beam: {error:#}");
         std::process::exit(1);
     }
 }
 
+#[tokio::main]
 async fn run(cli: Cli) -> Result<()> {
     share(cli.target, cli.name, cli.run).await
 }

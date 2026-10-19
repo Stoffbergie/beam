@@ -7,6 +7,19 @@ import { baseUrl, runCli, sleep, startCli, startLocal, traffic, trafficSocket, u
 
 const nameOf = (url: string) => new URL(url).hostname.split(".")[0];
 
+test("help, version and invalid arguments exit without starting a beam", async () => {
+  const help = await runCli(["--help"]);
+  assert.equal(help.code, 0);
+  assert.match(help.output, /Usage: beam/);
+  assert.match(help.output, /beam 3000 -- npm run dev/);
+  const version = await runCli(["--version"]);
+  assert.equal(version.code, 0);
+  assert.match(version.output, /^beam \d+\.\d+\.\d+\s*$/);
+  const invalid = await runCli(["--does-not-exist"]);
+  assert.equal(invalid.code, 2);
+  assert.match(invalid.output, /unexpected argument/);
+});
+
 test("beam <port> puts a local server online without token setup", async () => {
   const local = await startLocal();
   const name = uniqueName("app");
