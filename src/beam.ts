@@ -186,11 +186,10 @@ export class Beam extends DurableObject<Env> {
   private fromForwarder(socket: WebSocket, data: string | ArrayBuffer): void {
     if (socket !== this.forwarder) return;
     if (typeof data !== "string") {
-      const bytes = new Uint8Array(data);
       const view = new DataView(data);
       const type = view.getUint8(0);
       const stream = view.getUint32(1);
-      const payload = bytes.subarray(5);
+      const payload = new Uint8Array(data, 5);
       if (type === frame.responseBody) this.push(stream, payload);
       if (type === frame.socketMessage) this.sockets.get(stream)?.socket?.send(payload);
       return;
