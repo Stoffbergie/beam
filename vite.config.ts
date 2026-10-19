@@ -3,6 +3,7 @@ import { defineConfig } from "vite-plus";
 
 export default defineConfig({
   plugins: process.env.VITEST ? [] : [cloudflare()],
+  build: { minify: true },
   server: { host: "0.0.0.0", port: 8787, allowedHosts: true },
   test: {
     include: ["tests/**/*.test.ts"],
