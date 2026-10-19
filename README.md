@@ -44,6 +44,8 @@ Catching or replaying webhooks? That's [hook](https://github.com/Stoffbergie/hoo
 brew install stoffbergie/tap/beam
 ```
 
+For direct [Linux downloads](https://github.com/Stoffbergie/beam/releases/latest), the GNU x86_64 archive requires glibc 2.38 or newer, and the GNU ARM64 archive requires glibc 2.39 or newer. The `beam-x86_64-unknown-linux-musl.tar.gz` archive does not depend on glibc. No ARM64 musl archive is published.
+
 beam serves content from your domain, so it needs the owner token. Set it once:
 
 ```sh
