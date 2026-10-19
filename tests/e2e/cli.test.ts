@@ -410,3 +410,36 @@ test("requests without bodies keep their method and empty payload", async () => 
     await local.close();
   }
 });
+
+test("a timed-out WebSocket upgrade releases the unanswered local connection", async () => {
+  const local = await startLocal();
+  local.server.removeAllListeners("upgrade");
+  let connectionClosed = false;
+  let closeConnection: (() => void) | undefined;
+  local.server.on("upgrade", (_request, socket) => {
+    closeConnection = () => socket.destroy();
+    socket.once("end", () => socket.end());
+    socket.once("close", () => (connectionClosed = true));
+    socket.resume();
+  });
+  const name = uniqueName("timeout");
+  const cli = await startCli([String(local.port), "--name", name]);
+  const socket = trafficSocket(name, "/unanswered");
+  try {
+    const error = await new Promise<Error>((resolve, reject) => {
+      socket.once("error", resolve);
+      socket.once("open", () => reject(new Error("The unanswered upgrade was accepted")));
+    });
+    assert.match(error.message, /502/);
+    await waitFor(
+      () => (connectionClosed ? true : undefined),
+      () => "The timed-out upgrade left its local connection open",
+      2000
+    );
+  } finally {
+    socket.terminate();
+    cli.stop();
+    closeConnection?.();
+    await local.close();
+  }
+});
