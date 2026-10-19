@@ -9,7 +9,6 @@ import { WebSocket, WebSocketServer, type RawData } from "ws";
 
 export const baseUrl = inject("baseUrl");
 export const tunnelDomain = inject("tunnelDomain");
-export const ownerToken = inject("ownerToken");
 const cliPath = inject("cli");
 const serverPort = new URL(baseUrl).port;
 
@@ -36,11 +35,10 @@ export function trafficSocket(name: string, path: string): WebSocket {
 
 export type Cli = { process: ChildProcess; output: () => string; url: string; stop: () => void };
 
-export async function startCli(args: string[], options: { token?: string } = {}): Promise<Cli> {
+export async function startCli(args: string[], options: { baseUrl?: string } = {}): Promise<Cli> {
   const home = mkdtempSync(join(tmpdir(), "beam-cli-"));
-  const env: Record<string, string> = { ...(process.env as Record<string, string>), BEAM_URL: baseUrl, HOME: home, XDG_CONFIG_HOME: home, NO_COLOR: "1" };
-  if (options.token) env.BEAM_TOKEN = options.token;
-  else delete env.BEAM_TOKEN;
+  const env: Record<string, string> = { ...(process.env as Record<string, string>), BEAM_URL: options.baseUrl ?? baseUrl, HOME: home, XDG_CONFIG_HOME: home, NO_COLOR: "1" };
+  delete env.BEAM_TOKEN;
   const child = spawn(cliPath, args, { env });
   let text = "";
   child.stdout.on("data", (chunk: Buffer) => (text += chunk.toString()));
@@ -58,12 +56,11 @@ export async function startCli(args: string[], options: { token?: string } = {})
   return { process: child, output, url, stop };
 }
 
-export async function runCli(args: string[], options: { token?: string; home?: string } = {}): Promise<{ code: number | null; output: string }> {
+export async function runCli(args: string[], options: { home?: string } = {}): Promise<{ code: number | null; output: string }> {
   const home = options.home ?? mkdtempSync(join(tmpdir(), "beam-cli-"));
   const env: Record<string, string> = { ...(process.env as Record<string, string>), BEAM_URL: baseUrl, HOME: home, XDG_CONFIG_HOME: home, NO_COLOR: "1" };
-  if (options.token) env.BEAM_TOKEN = options.token;
-  else delete env.BEAM_TOKEN;
-  const child = spawn(cliPath, args, { env });
+  delete env.BEAM_TOKEN;
+  const child = spawn(cliPath, args, { env, timeout: 10_000 });
   let text = "";
   child.stdout.on("data", (chunk: Buffer) => (text += chunk.toString()));
   child.stderr.on("data", (chunk: Buffer) => (text += chunk.toString()));

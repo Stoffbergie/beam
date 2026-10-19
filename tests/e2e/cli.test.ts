@@ -1,14 +1,16 @@
 import { strict as assert } from "node:assert";
-import { request as httpRequest } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
+import type { AddressInfo } from "node:net";
+import { WebSocket, WebSocketServer } from "ws";
 import { test } from "vite-plus/test";
-import { baseUrl, ownerToken, runCli, sleep, startCli, startLocal, traffic, trafficSocket, uniqueName, waitFor, textOf } from "../helpers/beam";
+import { baseUrl, runCli, sleep, startCli, startLocal, traffic, trafficSocket, uniqueName, waitFor, textOf } from "../helpers/beam";
 
 const nameOf = (url: string) => new URL(url).hostname.split(".")[0];
 
-test("beam <port> puts a local server online", async () => {
+test("beam <port> puts a local server online without token setup", async () => {
   const local = await startLocal();
   const name = uniqueName("app");
-  const cli = await startCli([String(local.port), "--name", name], { token: ownerToken });
+  const cli = await startCli([String(local.port), "--name", name]);
   try {
     assert.equal(nameOf(cli.url), name);
 
@@ -38,7 +40,7 @@ test("beam <port> puts a local server online", async () => {
 test("WebSockets pass through to the local server, so hot reload works", async () => {
   const local = await startLocal();
   const name = uniqueName("ws");
-  const cli = await startCli([String(local.port), "--name", name], { token: ownerToken });
+  const cli = await startCli([String(local.port), "--name", name]);
   try {
     const socket = trafficSocket(name, "/hmr");
     await new Promise((resolve, reject) => {
@@ -67,7 +69,7 @@ test("a stopped local server gets a clear 502", async () => {
   const port = local.port;
   await local.close();
   const name = uniqueName("down");
-  const cli = await startCli([String(port), "--name", name], { token: ownerToken });
+  const cli = await startCli([String(port), "--name", name]);
   try {
     const reply = await traffic(name, "/");
     assert.equal(reply.status, 502);
@@ -77,40 +79,13 @@ test("a stopped local server gets a clear 502", async () => {
   }
 });
 
-test("a new beam takes over its name without the previous CLI reconnecting", async () => {
-  const firstLocal = await startLocal();
-  const secondLocal = await startLocal();
-  const name = uniqueName("replace");
-  const first = await startCli([String(firstLocal.port), "--name", name], { token: ownerToken });
-  let second: Awaited<ReturnType<typeof startCli>> | undefined;
-  try {
-    second = await startCli([String(secondLocal.port), "--name", name], { token: ownerToken });
-    await waitFor(
-      () => (first.process.exitCode !== null ? true : undefined),
-      () => `The replaced CLI did not exit\n${first.output()}`,
-      5000
-    );
-    assert.equal(first.process.exitCode, 1);
-    assert.match(first.output(), /another beam took over this name/);
-    assert.doesNotMatch(first.output(), /Reconnecting/);
-
-    const reply = await traffic(name, "/replacement");
-    assert.equal(reply.status, 200, second.output());
-    assert.equal(JSON.parse(reply.text).host, `localhost:${secondLocal.port}`);
-  } finally {
-    first.stop();
-    second?.stop();
-    await Promise.all([firstLocal.close(), secondLocal.close()]);
-  }
-});
-
-test("replacing a beam closes its old response streams and WebSockets", async () => {
+test("rejecting a takeover keeps streams open, and stopping the beam closes them", async () => {
   const firstLocal = await startLocal();
   firstLocal.server.removeAllListeners("request");
   firstLocal.server.on("request", (_request, response) => response.write("stream started"));
   const secondLocal = await startLocal();
   const name = uniqueName("streams");
-  const first = await startCli([String(firstLocal.port), "--name", name], { token: ownerToken });
+  const first = await startCli([String(firstLocal.port), "--name", name]);
   const socket = trafficSocket(name, "/hmr");
   let socketClosed = false;
   socket.on("close", () => (socketClosed = true));
@@ -133,13 +108,18 @@ test("replacing a beam closes its old response streams and WebSockets", async ()
       () => (body === "stream started" ? true : undefined),
       () => "The original response did not start streaming"
     );
-    second = await startCli([String(secondLocal.port), "--name", name], { token: ownerToken });
+    const refused = await runCli([String(secondLocal.port), "--name", name]);
+    assert.equal(refused.code, 1);
+    assert.match(refused.output, /already in use/);
+    assert.equal(responseClosed, false);
+    assert.equal(socketClosed, false);
     first.stop();
     await waitFor(
       () => (responseClosed && socketClosed ? true : undefined),
-      () => `Replacement left old connections open: HTTP closed=${responseClosed}, WebSocket closed=${socketClosed}`,
+      () => `Stopping left old connections open: HTTP closed=${responseClosed}, WebSocket closed=${socketClosed}`,
       2000
     );
+    second = await startCli([String(secondLocal.port), "--name", name]);
     const reply = await traffic(name, "/replacement");
     assert.equal(reply.status, 200, second.output());
     assert.equal(JSON.parse(reply.text).host, `localhost:${secondLocal.port}`);
@@ -152,20 +132,88 @@ test("replacing a beam closes its old response streams and WebSockets", async ()
   }
 });
 
-test("sharing needs the right owner token", async () => {
-  const missing = await runCli(["3000"]);
-  assert.equal(missing.code, 1);
-  assert.match(missing.output, /owner token/);
+test("another CLI cannot replace an active beam, but can use the name after it stops", async () => {
+  const local = await startLocal();
+  const name = uniqueName("claimed");
+  const cli = await startCli([String(local.port), "--name", name]);
+  try {
+    const other = await runCli([String(local.port), "--name", name]);
+    assert.equal(other.code, 1);
+    assert.match(other.output, /already in use/);
+    assert.equal((await traffic(name, "/still-original")).status, 200);
+    await waitFor(
+      () => (cli.output().includes("/still-original") ? true : undefined),
+      () => "The original CLI stopped receiving traffic"
+    );
+    cli.stop();
+    await waitFor(
+      async () => ((await traffic(name, "/")).status === 502 ? true : undefined),
+      () => "Beam did not go offline"
+    );
+    const next = await startCli([String(local.port), "--name", name]);
+    try {
+      assert.equal((await traffic(name, "/reused")).status, 200);
+    } finally {
+      next.stop();
+    }
+  } finally {
+    cli.stop();
+    await local.close();
+  }
+});
 
-  const wrong = await fetch(`${baseUrl}/app/connect`, { headers: { Authorization: "Bearer not-the-token" } });
-  assert.equal(wrong.status, 401);
-  const right = await fetch(`${baseUrl}/app/connect`, { headers: { Authorization: `Bearer ${ownerToken}` } });
-  assert.equal(right.status, 426);
+test("the CLI reconnects to the same URL even when its old connection is still open", async () => {
+  const local = await startLocal();
+  const proxy = createServer();
+  const sockets = new WebSocketServer({ server: proxy });
+  const connections: { client: WebSocket; upstream: WebSocket }[] = [];
+  sockets.on("connection", (client, request) => {
+    const upstream = new WebSocket(`${baseUrl.replace(/^http/, "ws")}${request.url}`, { headers: { authorization: request.headers.authorization ?? "" } });
+    connections.push({ client, upstream });
+    client.on("message", (data, binary) => {
+      if (upstream.readyState === WebSocket.OPEN) upstream.send(data, { binary });
+    });
+    upstream.on("message", (data, binary) => {
+      if (client.readyState === WebSocket.OPEN) client.send(data, { binary });
+    });
+    upstream.on("close", () => client.close());
+    upstream.on("error", () => client.close());
+  });
+  await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+  const port = (proxy.address() as AddressInfo).port;
+  const name = uniqueName("reconnect");
+  const cli = await startCli([String(local.port), "--name", name], { baseUrl: `http://127.0.0.1:${port}` });
+  try {
+    assert.equal((await traffic(name, "/before-disconnect")).status, 200);
+    const original = connections[0];
+    original.client.terminate();
+    await waitFor(
+      async () => {
+        if (connections.length <= 1 || original.upstream.readyState !== WebSocket.CLOSED) return undefined;
+        const reply = await traffic(name, "/after-reconnect");
+        return reply.status === 200 ? true : undefined;
+      },
+      () => `CLI did not reconnect to the same URL\n${cli.output()}`
+    );
+    await waitFor(
+      () => (cli.output().includes("/after-reconnect") ? true : undefined),
+      () => "The reconnected CLI did not receive traffic"
+    );
+  } finally {
+    cli.stop();
+    for (const { client, upstream } of connections) {
+      client.terminate();
+      upstream.terminate();
+    }
+    sockets.close();
+    await new Promise<void>((resolve) => proxy.close(() => resolve()));
+    await local.close();
+  }
 });
 
 test("a random URL works without --name and goes offline when beam stops", async () => {
   const local = await startLocal();
-  const cli = await startCli([String(local.port)], { token: ownerToken });
+  const cli = await startCli([String(local.port)]);
   const name = nameOf(cli.url);
   assert.match(name, /^[a-z0-9]{8}$/);
   assert.equal((await traffic(name, "/")).status, 200, cli.output());
@@ -188,7 +236,7 @@ test("beam <port> -- <command> starts the app, waits for it, then shares it", as
   await probe.close();
   const name = uniqueName("run");
   const server = `require('http').createServer((q, r) => r.end('started-by-beam')).listen(${port}, '127.0.0.1')`;
-  const cli = await startCli([String(port), "--name", name, "--", "node", "-e", server], { token: ownerToken });
+  const cli = await startCli([String(port), "--name", name, "--", "node", "-e", server]);
   try {
     const reply = await traffic(name, "/");
     assert.equal(reply.text, "started-by-beam", cli.output());
@@ -213,7 +261,7 @@ test("a single quoted command after -- runs through the shell", async () => {
   await probe.close();
   const name = uniqueName("sh");
   const line = `PORT=${port} node -e "require('http').createServer((q, r) => r.end('shell:' + process.env.PORT)).listen(process.env.PORT, '127.0.0.1')"`;
-  const cli = await startCli([String(port), "--name", name, "--", line], { token: ownerToken });
+  const cli = await startCli([String(port), "--name", name, "--", line]);
   try {
     const reply = await traffic(name, "/");
     assert.equal(reply.text, `shell:${port}`, cli.output());

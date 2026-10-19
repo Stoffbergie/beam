@@ -7,7 +7,7 @@ export const app = new Hono<{ Bindings: Env }>();
 
 app.use("*", async (c, next) => {
   await next();
-  if (c.res.status !== 101) c.res.headers.set("Cache-Control", "no-store");
+  if (c.res.status !== 101) c.header("Cache-Control", "no-store");
 });
 
 app.onError((error) => {
@@ -33,21 +33,12 @@ app.get("/sitemap.xml", (c) => {
 app.get("/:name/connect", async (c) => {
   const name = c.req.param("name");
   if (!validName(name)) return text("Names use 1-32 lowercase letters, digits and dashes\n", 400);
-  if (!isOwner(c.env.BEAM_TOKEN, c.req.header("authorization"))) return text("Forwarding needs the owner token\n", 401);
   if (c.req.header("upgrade")?.toLowerCase() !== "websocket") return text("Connect with a WebSocket\n", 426);
   const publicUrl = encodeURIComponent(`https://${name}.${c.env.TUNNEL_DOMAIN}`);
   return c.env.BEAMS.getByName(name).fetch(new Request(`https://beam.internal/connect?url=${publicUrl}`, c.req.raw));
 });
 
 app.notFound((c) => (wantsHtml(c.req.raw.headers) ? c.html(notFoundPage(), 404) : text("Not found\n", 404)));
-
-function isOwner(token: string | undefined, authorization: string | undefined): boolean {
-  if (!token || !authorization?.startsWith("Bearer ")) return false;
-  const encoder = new TextEncoder();
-  const presented = encoder.encode(authorization.slice(7).trim());
-  const expected = encoder.encode(token);
-  return presented.byteLength === expected.byteLength && crypto.subtle.timingSafeEqual(presented, expected);
-}
 
 function wantsHtml(headers: Headers): boolean {
   const crawler = /WhatsApp|facebookexternalhit|Facebot|meta-externalagent|Twitterbot|LinkedInBot|Slackbot|Discordbot|TelegramBot|Googlebot|bingbot/i;

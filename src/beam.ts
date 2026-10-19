@@ -26,6 +26,7 @@ const hopByHop = new Set(["connection", "keep-alive", "proxy-connection", "trans
 
 export class Beam extends DurableObject<Env> {
   private forwarder?: WebSocket;
+  private connectionToken?: string;
   private pending = new Map<number, Pending>();
   private sockets = new Map<number, Passthrough>();
   private nextStream = 0;
@@ -41,6 +42,9 @@ export class Beam extends DurableObject<Env> {
   }
 
   private attach(request: Request, publicUrl: string): Response {
+    const token = request.headers.get("authorization")?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+    if (!token) return new Response("Connect with the beam CLI\n", { status: 400 });
+    if (this.forwarder && this.connectionToken !== token) return new Response("That beam name is already in use\n", { status: 409 });
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     server.accept();
@@ -51,6 +55,7 @@ export class Beam extends DurableObject<Env> {
       this.forwarderGone(previous);
     }
     this.forwarder = server;
+    this.connectionToken = token;
     server.addEventListener("message", (event) => this.fromForwarder(server, event.data));
     server.addEventListener("close", () => this.forwarderGone(server));
     server.addEventListener("error", () => this.forwarderGone(server));
@@ -246,6 +251,7 @@ export class Beam extends DurableObject<Env> {
   private forwarderGone(socket: WebSocket): void {
     if (socket !== this.forwarder) return;
     this.forwarder = undefined;
+    this.connectionToken = undefined;
     for (const stream of this.pending.keys()) this.fail(stream, 502, "Your machine disconnected\n");
     for (const entry of this.sockets.values()) {
       entry.resolve?.(null);
