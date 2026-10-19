@@ -149,7 +149,7 @@ async fn session(name: &str, token: &str, target: &Target, announced: &mut bool)
             loop {
                 tokio::time::sleep(Duration::from_secs(25)).await;
                 if outbox
-                    .unbounded_send(Message::text(r#"{"t":"ping","id":0}"#))
+                    .unbounded_send(Message::text(r#"{"t":"ping"}"#))
                     .is_err()
                 {
                     break;
