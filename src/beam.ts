@@ -158,8 +158,7 @@ export class Beam extends DurableObject<Env> {
           t: "ws",
           id: stream,
           path,
-          headers: forwardHeaders(request, new URL(request.url)),
-          protocols: request.headers.get("sec-websocket-protocol") ?? ""
+          headers: forwardHeaders(request, new URL(request.url))
         })
       );
     });
