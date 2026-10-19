@@ -22,6 +22,7 @@ type Passthrough = {
 const chunkSize = 256 * 1024;
 const responseTimeoutMs = 100_000;
 const frame = { requestBody: 1, responseBody: 2, socketMessage: 3 } as const;
+const bodylessMethods = new Set(["GET", "HEAD", "OPTIONS", "DELETE"]);
 const hopByHop = new Set(["connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "te", "trailer", "content-length"]);
 
 export class Beam extends DurableObject<Env> {
@@ -82,7 +83,8 @@ export class Beam extends DurableObject<Env> {
       this.pending.set(stream, { resolve, timer, streaming: false, chunks: [], done: false });
     });
     forwarder.send(JSON.stringify({ t: "req", id: stream, method: request.method, path, headers: forwardHeaders(request, url), hasBody: request.body !== null }));
-    this.ctx.waitUntil(this.pump(forwarder, stream, request.body));
+    const needsBodyEnd = request.body !== null || request.headers.has("content-length") || !bodylessMethods.has(request.method);
+    if (needsBodyEnd) this.ctx.waitUntil(this.pump(forwarder, stream, request.body));
     const head = await response;
     return head instanceof Response ? head : this.streamedResponse(stream, head, forwarder, request.signal);
   }

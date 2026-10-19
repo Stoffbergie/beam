@@ -149,6 +149,30 @@ test("a stopped local server gets a clear 502", async () => {
   }
 });
 
+test("DELETE uploads still arrive without a content length", async () => {
+  const local = await startLocal();
+  const name = uniqueName("delete");
+  const cli = await startCli([String(local.port), "--name", name]);
+  try {
+    const reply = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const request = httpRequest(`${baseUrl}/delete`, { method: "DELETE", headers: { host: `${name}.beam.test`, "transfer-encoding": "chunked" } }, (response) => {
+        let body = "";
+        response.on("data", (chunk: Buffer) => (body += chunk.toString()));
+        response.on("end", () => resolve({ status: response.statusCode ?? 0, body }));
+        response.on("error", reject);
+      });
+      request.on("error", reject);
+      request.write("part one");
+      request.end("part two");
+    });
+    assert.equal(reply.status, 200, cli.output());
+    assert.equal(JSON.parse(reply.body).body, "part onepart two");
+  } finally {
+    cli.stop();
+    await local.close();
+  }
+});
+
 test("rejecting a takeover keeps streams open, and stopping the beam closes them", async () => {
   const firstLocal = await startLocal();
   firstLocal.server.removeAllListeners("request");
