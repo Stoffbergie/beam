@@ -108,7 +108,7 @@ type Outbox = mpsc::UnboundedSender<Message>;
 
 #[derive(Serialize)]
 #[serde(tag = "t")]
-enum ResponseControl {
+enum Outgoing<'a> {
     #[serde(rename = "res")]
     Head {
         id: u32,
@@ -117,6 +117,14 @@ enum ResponseControl {
     },
     #[serde(rename = "end")]
     End { id: u32 },
+    #[serde(rename = "ws-fail")]
+    SocketFailed { id: u32 },
+    #[serde(rename = "ws-ok")]
+    SocketReady { id: u32, protocol: &'a str },
+    #[serde(rename = "wst")]
+    SocketText { id: u32, data: &'a str },
+    #[serde(rename = "wsc")]
+    SocketClosed { id: u32, code: u16, reason: &'a str },
 }
 
 pub async fn run(name: &str, token: &str, target: &Target) -> Result<()> {
@@ -403,7 +411,7 @@ async fn proxy(
             )
         })
         .collect();
-    let _ = outbox.unbounded_send(control(ResponseControl::Head {
+    let _ = outbox.unbounded_send(control(Outgoing::Head {
         id,
         status,
         headers: response_headers,
@@ -424,7 +432,7 @@ async fn proxy(
             }
         }
     }
-    let _ = outbox.unbounded_send(control(ResponseControl::End { id }));
+    let _ = outbox.unbounded_send(control(Outgoing::End { id }));
     output::request(
         &method,
         &path,
@@ -442,7 +450,7 @@ async fn passthrough(
     outbox: Outbox,
 ) {
     let fail = |outbox: &Outbox| {
-        let _ = outbox.unbounded_send(control(json!({"t": "ws-fail", "id": id})));
+        let _ = outbox.unbounded_send(control(Outgoing::SocketFailed { id }));
     };
     let Ok(mut request) = format!("{}{}", target.socket, path).into_client_request() else {
         return fail(&outbox);
@@ -477,11 +485,8 @@ async fn passthrough(
         .headers()
         .get("sec-websocket-protocol")
         .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_string();
-    let _ = outbox.unbounded_send(control(
-        json!({"t": "ws-ok", "id": id, "protocol": protocol}),
-    ));
+        .unwrap_or_default();
+    let _ = outbox.unbounded_send(control(Outgoing::SocketReady { id, protocol }));
     output::request("WS", &path, Some(101), "connected");
 
     let (mut local_sink, mut local_stream) = socket.split();
@@ -501,21 +506,22 @@ async fn passthrough(
             },
             message = local_stream.next() => match message {
                 Some(Ok(Message::Text(text))) => {
-                    let _ = outbox.unbounded_send(control(json!({"t": "wst", "id": id, "data": text.as_str()})));
+                    let _ = outbox.unbounded_send(control(Outgoing::SocketText { id, data: text.as_str() }));
                 }
                 Some(Ok(Message::Binary(bytes))) => {
                     let _ = outbox.unbounded_send(frame(SOCKET_MESSAGE, id, &bytes));
                 }
                 Some(Ok(Message::Close(frame))) => {
-                    let (code, reason) = frame
-                        .map(|frame| (u16::from(frame.code), frame.reason.to_string()))
-                        .unwrap_or((1000, String::new()));
-                    let _ = outbox.unbounded_send(control(json!({"t": "wsc", "id": id, "code": code, "reason": reason})));
+                    let (code, reason) = match frame.as_ref() {
+                        Some(frame) => (u16::from(frame.code), frame.reason.as_str()),
+                        None => (1000, ""),
+                    };
+                    let _ = outbox.unbounded_send(control(Outgoing::SocketClosed { id, code, reason }));
                     break;
                 }
                 Some(Ok(_)) => {}
                 Some(Err(_)) | None => {
-                    let _ = outbox.unbounded_send(control(json!({"t": "wsc", "id": id, "code": 1001, "reason": ""})));
+                    let _ = outbox.unbounded_send(control(Outgoing::SocketClosed { id, code: 1001, reason: "" }));
                     break;
                 }
             },
