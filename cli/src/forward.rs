@@ -3,7 +3,8 @@ use anyhow::{anyhow, bail, Result};
 use bytes::Bytes;
 use futures_channel::mpsc;
 use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeSeq;
+use serde::{Deserialize, Serialize, Serializer};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -111,7 +112,8 @@ enum Outgoing<'a> {
     Head {
         id: u32,
         status: u16,
-        headers: Vec<(String, String)>,
+        #[serde(serialize_with = "serialize_headers")]
+        headers: &'a reqwest::header::HeaderMap,
     },
     #[serde(rename = "end")]
     End { id: u32 },
@@ -412,20 +414,10 @@ async fn proxy(
     };
 
     let status = response.status().as_u16();
-    let response_headers: Vec<(String, String)> = response
-        .headers()
-        .iter()
-        .map(|(name, value)| {
-            (
-                name.to_string(),
-                String::from_utf8_lossy(value.as_bytes()).to_string(),
-            )
-        })
-        .collect();
     let _ = outbox.unbounded_send(control(Outgoing::Head {
         id,
         status,
-        headers: response_headers,
+        headers: response.headers(),
     }));
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
@@ -562,6 +554,17 @@ pub async fn wait_for_port(target: &Target, child: &mut tokio::process::Child) -
 
 fn sendable(code: u16) -> bool {
     matches!(code, 1000..=1003 | 1007..=1014 | 3000..=4999)
+}
+
+fn serialize_headers<S: Serializer>(
+    headers: &reqwest::header::HeaderMap,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let mut sequence = serializer.serialize_seq(Some(headers.len()))?;
+    for (name, value) in headers {
+        sequence.serialize_element(&(name.as_str(), String::from_utf8_lossy(value.as_bytes())))?;
+    }
+    sequence.end()
 }
 
 fn control(value: Outgoing<'_>) -> Message {
