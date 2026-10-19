@@ -22,7 +22,11 @@ pub fn note(message: &str) {
 }
 
 pub fn request(method: &str, path: &str, status: u16, detail: &str) {
-    println!("{method:<7} {status:<4} {path} {}", dim(detail));
+    if *COLOR {
+        println!("{method:<7} {status:<4} {path} \x1b[90m{detail}\x1b[0m");
+    } else {
+        println!("{method:<7} {status:<4} {path} {detail}");
+    }
 }
 
 pub fn duration(elapsed: Duration) -> String {
