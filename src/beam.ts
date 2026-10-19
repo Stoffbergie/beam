@@ -74,8 +74,8 @@ export class Beam extends DurableObject<Env> {
       }
       return new Response("This beam is offline\n", { status: 502, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     }
+    if (request.headers.get("upgrade")?.toLowerCase() === "websocket") return this.passthrough(request, url);
     const path = url.pathname + url.search;
-    if (request.headers.get("upgrade")?.toLowerCase() === "websocket") return this.passthrough(request, path);
 
     const stream = ++this.nextStream;
     const response = new Promise<Head | Response>((resolve) => {
@@ -147,7 +147,7 @@ export class Beam extends DurableObject<Env> {
     }
   }
 
-  private async passthrough(request: Request, path: string): Promise<Response> {
+  private async passthrough(request: Request, url: URL): Promise<Response> {
     const forwarder = this.forwarder;
     if (!forwarder) return new Response("This beam is offline\n", { status: 502 });
     const stream = ++this.nextStream;
@@ -163,8 +163,8 @@ export class Beam extends DurableObject<Env> {
         JSON.stringify({
           t: "ws",
           id: stream,
-          path,
-          headers: forwardHeaders(request, new URL(request.url))
+          path: url.pathname + url.search,
+          headers: forwardHeaders(request, url)
         })
       );
     });
