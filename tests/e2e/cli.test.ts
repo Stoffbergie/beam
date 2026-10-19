@@ -445,3 +445,26 @@ test("a timed-out WebSocket upgrade releases the unanswered local connection", a
     await local.close();
   }
 });
+
+test("responses without payloads preserve their status and cache headers", async () => {
+  const local = await startLocal();
+  local.server.removeAllListeners("request");
+  local.server.on("request", (request, response) => {
+    response.statusCode = Number(request.url?.slice(1));
+    response.setHeader("etag", '"same"');
+    response.end(response.statusCode === 200 ? "ok" : undefined);
+  });
+  const name = uniqueName("statuses");
+  const cli = await startCli([String(local.port), "--name", name]);
+  try {
+    for (const status of [204, 205, 304, 200]) {
+      const reply = await traffic(name, `/${status}`);
+      assert.equal(reply.status, status);
+      assert.equal(reply.headers.etag, '"same"');
+      assert.equal(reply.text, status === 200 ? "ok" : "");
+    }
+  } finally {
+    cli.stop();
+    await local.close();
+  }
+});

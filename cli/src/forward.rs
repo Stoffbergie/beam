@@ -437,7 +437,9 @@ async fn proxy(
             }
         }
     }
-    let _ = outbox.unbounded_send(control(Outgoing::End { id }));
+    if !matches!(status, 204 | 205 | 304) {
+        let _ = outbox.unbounded_send(control(Outgoing::End { id }));
+    }
     output::request(&method, &path, status, &output::duration(started.elapsed()));
 }
 
