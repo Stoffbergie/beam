@@ -53,7 +53,7 @@ async fn share(target: String, name: Option<String>, run: Vec<String>) -> Result
         child = Some(process);
     }
 
-    let result = until_interrupted(forward::run(&name, &token, &target)).await;
+    let result = until_interrupted(forward::run(&name, &token, target)).await;
     if let Some(mut child) = child {
         stop(&mut child).await;
     }
