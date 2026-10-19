@@ -10,7 +10,7 @@ mod output;
 #[command(
     name = "beam",
     version,
-    about = "Your localhost, on the internet",
+    about = "Share local servers through public HTTPS URLs.",
     args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true,
     after_help = "Examples:\n  beam 3000                      Give localhost:3000 a public URL\n  beam 3000 --name app           Use a fixed URL like app.beam.stoff.dev\n  beam 3000 -- npm run dev       Start the app, wait for the port, then share it\n  beam config --token <token>    Save the owner token\n\nSet BEAM_URL to use another server and BEAM_TOKEN to pass the token directly.\nCatching webhooks? Use hook: https://hook.stoff.dev"

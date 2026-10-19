@@ -4,9 +4,7 @@
 
 # beam
 
-**Your localhost, on the internet.**
-
-Share a local port with a public https URL, WebSockets and all.
+**Share local servers through public HTTPS URLs.**
 
 [![Deploy](https://github.com/Stoffbergie/beam/actions/workflows/deploy.yml/badge.svg)](https://github.com/Stoffbergie/beam/actions/workflows/deploy.yml)
 [![Cloudflare Workers](https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-111?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com)
