@@ -103,6 +103,37 @@ test("WebSockets pass through to the local server, so hot reload works", async (
   }
 });
 
+test("binary WebSockets preserve empty and large messages", async () => {
+  const local = await startLocal();
+  const name = uniqueName("binary");
+  const cli = await startCli([String(local.port), "--name", name]);
+  const socket = trafficSocket(name, "/hmr");
+  try {
+    await new Promise((resolve, reject) => {
+      socket.on("open", resolve);
+      socket.on("error", reject);
+    });
+    for (const size of [0, 1, 512 * 1024]) {
+      const payload = Buffer.alloc(size);
+      for (let index = 0; index < payload.length; index++) payload[index] = index % 251;
+      const reply = new Promise<{ data: Buffer; binary: boolean }>((resolve, reject) => {
+        socket.once("message", (data, binary) => {
+          resolve({ data: Buffer.from(data as Buffer), binary });
+        });
+        socket.once("error", reject);
+      });
+      socket.send(payload);
+      const received = await reply;
+      assert.equal(received.binary, true);
+      assert.deepEqual(received.data, payload);
+    }
+  } finally {
+    socket.terminate();
+    cli.stop();
+    await local.close();
+  }
+});
+
 test("a stopped local server gets a clear 502", async () => {
   const local = await startLocal();
   const port = local.port;
