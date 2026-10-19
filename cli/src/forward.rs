@@ -407,7 +407,7 @@ async fn proxy(
                 &method,
                 &path,
                 502,
-                &format!("nothing answered on {}", target.display),
+                format_args!("nothing answered on {}", target.display),
             );
             return;
         }
@@ -440,7 +440,7 @@ async fn proxy(
     if !matches!(status, 204 | 205 | 304) {
         let _ = outbox.unbounded_send(control(Outgoing::End { id }));
     }
-    output::request(&method, &path, status, &output::duration(started.elapsed()));
+    output::request(&method, &path, status, output::duration(started.elapsed()));
 }
 
 async fn passthrough(
@@ -478,7 +478,7 @@ async fn passthrough(
                 "WS",
                 &path,
                 502,
-                &format!("nothing answered on {}", target.display),
+                format_args!("nothing answered on {}", target.display),
             );
             return fail(&outbox);
         }

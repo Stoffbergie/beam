@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::fmt::Display;
 use std::io::IsTerminal;
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -21,7 +22,7 @@ pub fn note(message: &str) {
     eprintln!("{}", dim(message));
 }
 
-pub fn request(method: &str, path: &str, status: u16, detail: &str) {
+pub fn request(method: &str, path: &str, status: u16, detail: impl Display) {
     if *COLOR {
         println!("{method:<7} {status:<4} {path} \x1b[90m{detail}\x1b[0m");
     } else {
