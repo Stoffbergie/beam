@@ -329,9 +329,22 @@ async fn proxy(
     if let Some(mut body) = body {
         match length {
             Some(length) if length <= BUFFERED_BODY => {
-                let mut bytes = Vec::with_capacity(length);
+                let mut bytes = Bytes::new();
                 while let Some(Ok(chunk)) = body.next().await {
-                    bytes.extend_from_slice(&chunk);
+                    if bytes.is_empty() && chunk.len() == length {
+                        bytes = chunk;
+                        continue;
+                    }
+                    let mut joined = Vec::with_capacity(length);
+                    joined.extend_from_slice(&bytes);
+                    joined.extend_from_slice(&chunk);
+                    drop(bytes);
+                    drop(chunk);
+                    while let Some(Ok(chunk)) = body.next().await {
+                        joined.extend_from_slice(&chunk);
+                    }
+                    bytes = joined.into();
+                    break;
                 }
                 request = request.body(bytes);
             }
