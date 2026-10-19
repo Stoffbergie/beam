@@ -308,3 +308,21 @@ test("a single quoted command after -- runs through the shell", async () => {
     cli.stop();
   }
 });
+
+test("requests without bodies keep their method and empty payload", async () => {
+  const local = await startLocal();
+  const name = uniqueName("empty");
+  const cli = await startCli([String(local.port), "--name", name]);
+  try {
+    for (const method of ["GET", "HEAD", "OPTIONS", "DELETE", "POST"]) {
+      const reply = await traffic(name, "/empty", { method });
+      assert.equal(reply.status, 200, cli.output());
+      const received = local.received.at(-1);
+      assert.equal(received?.method, method);
+      assert.equal(received?.body, "");
+    }
+  } finally {
+    cli.stop();
+    await local.close();
+  }
+});
