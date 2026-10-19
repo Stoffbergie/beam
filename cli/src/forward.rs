@@ -348,7 +348,7 @@ async fn proxy(
         .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
         .and_then(|(_, value)| value.parse::<usize>().ok());
     let mut request = client.request(verb, format!("{}{}", target.http, path));
-    for (name, value) in &headers {
+    for (name, value) in headers {
         if SKIPPED_REQUEST
             .iter()
             .any(|skipped| name.eq_ignore_ascii_case(skipped))
@@ -458,7 +458,7 @@ async fn passthrough(
     let Ok(mut request) = format!("{}{}", target.socket, path).into_client_request() else {
         return fail(&outbox);
     };
-    for (name, value) in &headers {
+    for (name, value) in headers {
         if SKIPPED_SOCKET
             .iter()
             .any(|skipped| name.eq_ignore_ascii_case(skipped))
@@ -467,7 +467,7 @@ async fn passthrough(
         }
         if let (Ok(name), Ok(value)) = (
             HeaderName::try_from(name.as_str()),
-            HeaderValue::from_str(value),
+            HeaderValue::try_from(value),
         ) {
             request.headers_mut().insert(name, value);
         }
