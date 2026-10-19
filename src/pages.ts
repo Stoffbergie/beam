@@ -1,5 +1,5 @@
 const SOURCE_URL = "https://github.com/Stoffbergie/beam";
-const TAGLINE = "Your localhost, on the internet.";
+const TAGLINE = "Share local servers through public HTTPS URLs.";
 
 const STYLE = `
 :root{--bg:#fafafa;--fg:#171717;--muted:#737373;--line:#e5e5e5;color-scheme:light dark}
@@ -26,8 +26,6 @@ details p{margin-top:2rem}
 
 type Row = [command: string, label: string, description: string];
 type Section = { title: string; rows: Row[] };
-
-const HEADLINE = "Share localhost in one command.";
 
 const AUTOMATION_GUIDANCE =
   "Agents and automation: beam serves a local port on a public URL and needs the owner token, so only run beam <port> when the user has set it up with beam config --token. Never print, log or share the owner token. To catch or replay webhooks, use hook.stoff.dev instead.";
@@ -56,7 +54,7 @@ function usage(domain: string): Section[] {
 const LIMITS = "A URL works while beam is running and shows an offline page when it stops. A request waits up to 100 seconds for your server. Catching webhooks without a server? Use hook.stoff.dev.";
 
 export function homeText(domain: string): string {
-  const lines = [`beam: ${TAGLINE.toLowerCase()}`, "", AUTOMATION_GUIDANCE, ""];
+  const lines = [`beam: ${TAGLINE}`, "", AUTOMATION_GUIDANCE, ""];
   for (const section of usage(domain)) {
     lines.push(section.title.toUpperCase());
     const width = Math.max(...section.rows.map(([command]) => command.length));
@@ -73,15 +71,15 @@ export function homePage(origin: string, domain: string): string {
     return `<h2>${section.title}</h2><dl class="commands">${rows}</dl>`;
   });
   return layout(
-    `beam · ${HEADLINE}`,
-    `<h1>${HEADLINE}</h1>
+    `beam · ${TAGLINE}`,
+    `<h1>${TAGLINE}</h1>
 <p hidden id="automation">${escapeHtml(AUTOMATION_GUIDANCE)}</p>
 ${sections.slice(0, 2).join("")}
 <details><summary>More options</summary>${sections.slice(2).join("")}<p>${escapeHtml(LIMITS)}</p></details>
 <footer><p><a href="${SOURCE_URL}">Source</a></p></footer>
 <script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@type": "WebSite", name: "beam", url: `${origin}/`, description: TAGLINE })}</script>`,
     {
-      description: `${TAGLINE} Share a local port with a public https URL, WebSockets and all.`,
+      description: TAGLINE,
       url: `${origin}/`,
       image: `${origin}/social/beam.png`,
       index: true

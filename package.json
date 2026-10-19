@@ -2,7 +2,7 @@
   "name": "beam",
   "version": "0.1.0",
   "private": false,
-  "description": "Your localhost, on the internet.",
+  "description": "Share local servers through public HTTPS URLs.",
   "homepage": "https://beam.stoff.dev",
   "bugs": {
     "url": "https://github.com/Stoffbergie/beam/issues"
