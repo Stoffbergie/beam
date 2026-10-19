@@ -30,9 +30,18 @@ fn main() {
     }
 }
 
-#[tokio::main]
-async fn run(cli: Cli) -> Result<()> {
-    share(cli.target, cli.name, cli.run).await
+fn run(cli: Cli) -> Result<()> {
+    let mut runtime = tokio::runtime::Builder::new_multi_thread();
+    if std::env::var_os("TOKIO_WORKER_THREADS").is_none() {
+        let available = std::thread::available_parallelism()
+            .map(|count| count.get())
+            .unwrap_or(1);
+        runtime.worker_threads(available.min(2));
+    }
+    runtime
+        .enable_all()
+        .build()?
+        .block_on(share(cli.target, cli.name, cli.run))
 }
 
 async fn share(target: String, name: Option<String>, run: Vec<String>) -> Result<()> {
