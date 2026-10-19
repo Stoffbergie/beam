@@ -1,9 +1,10 @@
-import { Hono } from "hono";
+import { HonoBase as Hono } from "hono/hono-base";
+import { TrieRouter } from "hono/router/trie-router";
 import type { Env } from "./env";
 import { validName } from "./names";
 import { homePage, homeText, notFoundPage } from "./pages";
 
-export const app = new Hono<{ Bindings: Env }>();
+export const app = new Hono<{ Bindings: Env }>({ router: new TrieRouter() });
 
 app.use("*", async (c, next) => {
   await next();
