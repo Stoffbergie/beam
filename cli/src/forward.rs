@@ -206,10 +206,13 @@ async fn session(name: &str, token: &str, target: &Target, announced: &mut bool)
                                 "GET" | "HEAD" | "OPTIONS" | "DELETE"
                             ))
                         });
-                        let (sender, receiver) = mpsc::channel(16);
-                        if has_body {
+                        let body = if has_body {
+                            let (sender, receiver) = mpsc::channel(16);
                             bodies.insert(control.id, sender);
-                        }
+                            Some(receiver)
+                        } else {
+                            None
+                        };
                         let task = tokio::spawn(proxy(
                             client.clone(),
                             target.clone(),
@@ -217,7 +220,7 @@ async fn session(name: &str, token: &str, target: &Target, announced: &mut bool)
                             method,
                             control.path.unwrap_or_else(|| "/".to_string()),
                             headers,
-                            has_body.then_some(receiver),
+                            body,
                             outbox.clone(),
                         ));
                         tasks.insert(control.id, task.abort_handle());
