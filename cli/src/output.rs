@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::fmt::Display;
+use std::fmt::{self, Display};
 use std::io::IsTerminal;
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -30,11 +30,19 @@ pub fn request(method: &str, path: &str, status: u16, detail: impl Display) {
     }
 }
 
-pub fn duration(elapsed: Duration) -> String {
-    let millis = elapsed.as_millis();
-    if millis < 1000 {
-        format!("{millis}ms")
-    } else {
-        format!("{:.1}s", elapsed.as_secs_f64())
+struct Elapsed(Duration);
+
+impl Display for Elapsed {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let millis = self.0.as_millis();
+        if millis < 1000 {
+            write!(formatter, "{millis}ms")
+        } else {
+            write!(formatter, "{:.1}s", self.0.as_secs_f64())
+        }
     }
+}
+
+pub fn duration(elapsed: Duration) -> impl Display {
+    Elapsed(elapsed)
 }
