@@ -35,6 +35,12 @@ pub fn random_name() -> anyhow::Result<String> {
     Ok(name)
 }
 
+pub fn connection_token() -> anyhow::Result<String> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
 #[derive(Debug)]
 pub struct Refused(pub u16);
 
@@ -45,9 +51,9 @@ impl std::fmt::Display for Refused {
                 formatter,
                 "names use 1-32 lowercase letters, digits and dashes (400)"
             ),
-            401 => write!(
+            409 => write!(
                 formatter,
-                "beam refused the owner token (401); set it with beam config --token <token>"
+                "that beam name is already in use; choose another with --name (409)"
             ),
             4000 => write!(formatter, "another beam took over this name"),
             code => write!(formatter, "beam refused to connect ({code})"),

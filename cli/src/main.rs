@@ -1,8 +1,7 @@
-use anyhow::{bail, Result};
-use clap::{Parser, Subcommand};
+use anyhow::Result;
+use clap::Parser;
 
 mod api;
-mod config;
 mod forward;
 mod output;
 
@@ -11,31 +10,17 @@ mod output;
     name = "beam",
     version,
     about = "Share local servers through public HTTPS URLs.",
-    args_conflicts_with_subcommands = true,
-    subcommand_negates_reqs = true,
-    after_help = "Examples:\n  beam 3000                      Give localhost:3000 a public URL\n  beam 3000 --name app           Use a fixed URL like app.beam.stoff.dev\n  beam 3000 -- npm run dev       Start the app, wait for the port, then share it\n  beam config --token <token>    Save the owner token\n\nSet BEAM_URL to use another server and BEAM_TOKEN to pass the token directly.\nCatching webhooks? Use hook: https://hook.stoff.dev"
+    after_help = "Examples:\n  beam 3000                      Give localhost:3000 a public URL\n  beam 3000 --name app           Use a fixed URL like app.beam.stoff.dev\n  beam 3000 -- npm run dev       Start the app, wait for the port, then share it\n\nSet BEAM_URL to use another server.\nCatching webhooks? Use hook: https://hook.stoff.dev"
 )]
 struct Cli {
-    #[command(subcommand)]
-    command: Option<Command>,
-
     #[arg(required = true, help = "Local port or URL to share")]
-    target: Option<String>,
+    target: String,
 
     #[arg(short, long, help = "Fixed name for the URL instead of a random one")]
     name: Option<String>,
 
     #[arg(last = true, help = "Command to start before sharing, after --")]
     run: Vec<String>,
-}
-
-#[derive(Subcommand)]
-enum Command {
-    #[command(about = "Show or set the owner token")]
-    Config {
-        #[arg(long, help = "Owner token that allows sharing; empty to remove")]
-        token: Option<String>,
-    },
 }
 
 #[tokio::main]
@@ -47,17 +32,11 @@ async fn main() {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    match (cli.command, cli.target) {
-        (Some(Command::Config { token }), _) => config::edit(token),
-        (None, Some(target)) => share(target, cli.name, cli.run).await,
-        (None, None) => unreachable!("clap requires a target"),
-    }
+    share(cli.target, cli.name, cli.run).await
 }
 
 async fn share(target: String, name: Option<String>, run: Vec<String>) -> Result<()> {
-    let Some(token) = config::token()? else {
-        bail!("sharing needs the owner token; set it with beam config --token <token>. Catching webhooks? Use hook: https://hook.stoff.dev");
-    };
+    let token = api::connection_token()?;
     let target = forward::Target::parse(&target)?;
     let name = match name {
         Some(name) => name,

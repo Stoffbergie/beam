@@ -44,24 +44,18 @@ brew install stoffbergie/tap/beam
 
 For direct [Linux downloads](https://github.com/Stoffbergie/beam/releases/latest), the GNU x86_64 archive requires glibc 2.38 or newer, and the GNU ARM64 archive requires glibc 2.39 or newer. The `beam-x86_64-unknown-linux-musl.tar.gz` archive does not depend on glibc. No ARM64 musl archive is published.
 
-beam serves content from your domain, so it needs the owner token. Set it once:
-
-```sh
-beam config --token <token>
-```
-
 ## Use
 
-| Do this                      | With                       |
-| ---------------------------- | -------------------------- |
-| Share localhost:3000         | `beam 3000`                |
-| Start an app and share it    | `beam 3000 -- npm run dev` |
-| Keep the same URL every time | `beam 3000 --name app`     |
-| Share another local address  | `beam 127.0.0.1:8080`      |
+| Do this                     | With                       |
+| --------------------------- | -------------------------- |
+| Share localhost:3000        | `beam 3000`                |
+| Start an app and share it   | `beam 3000 -- npm run dev` |
+| Pick an available URL       | `beam 3000 --name app`     |
+| Share another local address | `beam 127.0.0.1:8080`      |
 
 ## Security
 
-Only the owner token can open a beam, so strangers can't serve pages from the domain. Nothing is stored: requests pass straight through to your machine, and a URL shows an offline page as soon as beam stops.
+Anyone can start a beam without an account or token setup. Anyone with its URL can access your local server. An active beam cannot be replaced by someone else, but names are not reserved after disconnecting. Nothing is stored: requests pass straight through to your machine, and a URL shows an offline page as soon as beam stops.
 
 ## Limits
 
@@ -79,7 +73,7 @@ sequenceDiagram
     participant CLI as "beam CLI"
     participant App as "localhost:3000"
 
-    CLI->>Beam: "WebSocket (owner token)"
+    CLI->>Beam: "WebSocket (automatic connection key)"
     Visitor->>Beam: "GET https://app.beam.stoff.dev/"
     Beam->>CLI: "request + body"
     CLI->>App: "GET /"

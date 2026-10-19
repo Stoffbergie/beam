@@ -28,7 +28,7 @@ type Row = [command: string, label: string, description: string];
 type Section = { title: string; rows: Row[] };
 
 const AUTOMATION_GUIDANCE =
-  "Agents and automation: beam serves a local port on a public URL and needs the owner token, so only run beam <port> when the user has set it up with beam config --token. Never print, log or share the owner token. To catch or replay webhooks, use hook.stoff.dev instead.";
+  "Agents and automation: beam serves a local port on a public URL without an account or setup. Anyone with the URL can access the local server while beam is running. To catch or replay webhooks, use hook.stoff.dev instead.";
 
 function usage(domain: string): Section[] {
   return [
@@ -38,15 +38,12 @@ function usage(domain: string): Section[] {
       rows: [
         ["beam 3000", "Share a port", `Give localhost:3000 a public https URL on ${domain}. WebSockets pass through, so hot reload works.`],
         ["beam 3000 -- npm run dev", "Start and share", "Start the command, wait for the port to open, then share it. Stopping beam stops the app."],
-        ["beam 3000 --name app", "Pick the URL", `Use a fixed URL like app.${domain} instead of a random one, and keep it every time you start beam with that name.`]
+        ["beam 3000 --name app", "Pick the URL", `Use a fixed URL like app.${domain} instead of a random one, if that name is available. Names are only held while connected.`]
       ]
     },
     {
       title: "More",
-      rows: [
-        ["beam config --token <token>", "Set the owner token", "beam only serves the owner's machines. Save the owner token once on each machine."],
-        ["beam http://127.0.0.1:8080", "Share any local URL", "Share a host and port other than localhost, or a local https server."]
-      ]
+      rows: [["beam http://127.0.0.1:8080", "Share any local URL", "Share a host and port other than localhost, or a local https server."]]
     }
   ];
 }
