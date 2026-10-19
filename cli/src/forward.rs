@@ -163,7 +163,7 @@ async fn session(name: &str, token: &str, target: &Target, announced: &mut bool)
         .build()?;
     let mut bodies: HashMap<u32, mpsc::Sender<Result<Bytes, std::io::Error>>> = HashMap::new();
     let mut sockets: HashMap<u32, (Outbox, AbortHandle)> = HashMap::new();
-    let mut tasks: Vec<AbortHandle> = Vec::new();
+    let mut tasks: HashMap<u32, AbortHandle> = HashMap::new();
 
     let result = loop {
         let Some(message) = stream.next().await else {
@@ -220,10 +220,16 @@ async fn session(name: &str, token: &str, target: &Target, announced: &mut bool)
                             has_body.then_some(receiver),
                             outbox.clone(),
                         ));
-                        tasks.push(task.abort_handle());
+                        tasks.insert(control.id, task.abort_handle());
                     }
                     "end" => {
                         bodies.remove(&control.id);
+                    }
+                    "cancel" => {
+                        bodies.remove(&control.id);
+                        if let Some(task) = tasks.remove(&control.id) {
+                            task.abort();
+                        }
                     }
                     "ws" => {
                         let (local, receiver) = mpsc::unbounded::<Message>();
@@ -276,10 +282,10 @@ async fn session(name: &str, token: &str, target: &Target, announced: &mut bool)
             }
             _ => {}
         }
-        tasks.retain(|task| !task.is_finished());
+        tasks.retain(|_, task| !task.is_finished());
     };
 
-    for task in tasks {
+    for (_, task) in tasks {
         task.abort();
     }
     for (_, (_, task)) in sockets {
