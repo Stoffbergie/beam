@@ -151,8 +151,11 @@ export class Beam extends DurableObject<Env> {
     const entry: Passthrough = {};
     this.sockets.set(stream, entry);
     const accepted = await new Promise<{ protocol: string } | null>((resolve) => {
-      entry.resolve = resolve;
-      setTimeout(() => resolve(null), 10_000);
+      const timer = setTimeout(() => resolve(null), 10_000);
+      entry.resolve = (accepted) => {
+        clearTimeout(timer);
+        resolve(accepted);
+      };
       forwarder.send(
         JSON.stringify({
           t: "ws",
