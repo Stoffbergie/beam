@@ -262,9 +262,13 @@ export class Beam extends DurableObject<Env> {
 }
 
 function forwardHeaders(request: Request, url: URL): [string, string][] {
-  const headers = [...request.headers].filter(
-    ([name]) => !name.startsWith("cf-") && !name.startsWith("x-forwarded-") && (!hopByHop.has(name) || name === "content-length") && name !== "host" && name !== "x-real-ip"
-  );
+  const headers: [string, string][] = [];
+  for (const header of request.headers) {
+    const [name] = header;
+    if (name.startsWith("cf-") || name.startsWith("x-forwarded-") || name === "host" || name === "x-real-ip") continue;
+    if (hopByHop.has(name) && name !== "content-length") continue;
+    headers.push(header);
+  }
   headers.push(["x-forwarded-host", url.host], ["x-forwarded-proto", "https"]);
   const address = request.headers.get("cf-connecting-ip");
   if (address) headers.push(["x-forwarded-for", address]);
