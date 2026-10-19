@@ -5,6 +5,7 @@ use futures_channel::mpsc;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::task::AbortHandle;
@@ -85,8 +86,9 @@ impl Target {
 }
 
 #[derive(Deserialize)]
-struct Control {
-    t: String,
+struct Control<'a> {
+    #[serde(borrow)]
+    t: Cow<'a, str>,
     #[serde(default)]
     id: u32,
     url: Option<String>,
@@ -192,7 +194,7 @@ async fn session(name: &str, token: &str, target: &Target, announced: &mut bool)
                 let Ok(control) = serde_json::from_str::<Control>(&text) else {
                     continue;
                 };
-                match control.t.as_str() {
+                match control.t.as_ref() {
                     "req" => {
                         let method = control.method.unwrap_or_else(|| "GET".to_string());
                         let headers = control.headers.unwrap_or_default();
