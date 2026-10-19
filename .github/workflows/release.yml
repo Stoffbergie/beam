@@ -130,7 +130,7 @@ jobs:
           cp LICENSE dist/
           cp README.md dist/
           cd dist
-          7z a -tzip "../${{ matrix.name }}.zip" ./*
+          7z a -tzip -mx=9 "../${{ matrix.name }}.zip" ./*
 
       - name: Validate package (Windows)
         if: runner.os == 'Windows'
