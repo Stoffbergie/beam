@@ -3,7 +3,7 @@ use anyhow::{anyhow, bail, Result};
 use bytes::Bytes;
 use futures_channel::mpsc;
 use futures_util::{SinkExt, StreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -101,6 +101,19 @@ struct Control {
 }
 
 type Outbox = mpsc::UnboundedSender<Message>;
+
+#[derive(Serialize)]
+#[serde(tag = "t")]
+enum ResponseControl {
+    #[serde(rename = "res")]
+    Head {
+        id: u32,
+        status: u16,
+        headers: Vec<(String, String)>,
+    },
+    #[serde(rename = "end")]
+    End { id: u32 },
+}
 
 pub async fn run(name: &str, token: &str, target: &Target) -> Result<()> {
     let mut delay = 1;
@@ -370,9 +383,11 @@ async fn proxy(
             )
         })
         .collect();
-    let _ = outbox.unbounded_send(control(
-        json!({"t": "res", "id": id, "status": status, "headers": response_headers}),
-    ));
+    let _ = outbox.unbounded_send(control(ResponseControl::Head {
+        id,
+        status,
+        headers: response_headers,
+    }));
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         match chunk {
@@ -389,7 +404,7 @@ async fn proxy(
             }
         }
     }
-    let _ = outbox.unbounded_send(control(json!({"t": "end", "id": id})));
+    let _ = outbox.unbounded_send(control(ResponseControl::End { id }));
     output::request(
         &method,
         &path,
@@ -512,8 +527,8 @@ fn sendable(code: u16) -> bool {
     matches!(code, 1000..=1003 | 1007..=1014 | 3000..=4999)
 }
 
-fn control(value: serde_json::Value) -> Message {
-    Message::text(value.to_string())
+fn control(value: impl Serialize) -> Message {
+    Message::text(serde_json::to_string(&value).expect("control messages serialize to JSON"))
 }
 
 fn frame(kind: u8, id: u32, payload: &[u8]) -> Message {

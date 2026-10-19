@@ -132,6 +132,31 @@ test("rejecting a takeover keeps streams open, and stopping the beam closes them
   }
 });
 
+test("local response status and repeated cookies survive the tunnel", async () => {
+  const local = await startLocal();
+  const cookies = ["session=one; Path=/; HttpOnly", "theme=dark; Path=/"];
+  const message = 'say "hello" \\ again';
+  local.server.removeAllListeners("request");
+  local.server.on("request", (_request, response) => {
+    response.statusCode = 201;
+    response.setHeader("set-cookie", cookies);
+    response.setHeader("x-message", message);
+    response.end("saved");
+  });
+  const name = uniqueName("headers");
+  const cli = await startCli([String(local.port), "--name", name]);
+  try {
+    const reply = await traffic(name, "/created");
+    assert.equal(reply.status, 201);
+    assert.deepEqual(reply.headers["set-cookie"], cookies);
+    assert.equal(reply.headers["x-message"], message);
+    assert.equal(reply.text, "saved");
+  } finally {
+    cli.stop();
+    await local.close();
+  }
+});
+
 test("another CLI cannot replace an active beam, but can use the name after it stops", async () => {
   const local = await startLocal();
   const name = uniqueName("claimed");
