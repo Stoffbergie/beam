@@ -2,24 +2,20 @@ use std::fmt::Write;
 
 const DEFAULT_URL: &str = "https://beam.stoff.dev";
 
-pub fn base_url() -> String {
-    match std::env::var("BEAM_URL") {
-        Ok(url) if !url.is_empty() => url.trim_end_matches('/').to_string(),
-        _ => DEFAULT_URL.to_string(),
-    }
-}
-
 pub fn socket_url(name: &str) -> String {
-    let base = base_url();
-    let base = base
-        .strip_prefix("https://")
-        .map(|rest| format!("wss://{rest}"))
-        .or_else(|| {
-            base.strip_prefix("http://")
-                .map(|rest| format!("ws://{rest}"))
-        })
-        .unwrap_or(base);
-    format!("{base}/{name}/connect")
+    let custom = std::env::var("BEAM_URL").ok().filter(|url| !url.is_empty());
+    let base = custom
+        .as_deref()
+        .unwrap_or(DEFAULT_URL)
+        .trim_end_matches('/');
+    let (scheme, rest) = if let Some(rest) = base.strip_prefix("https://") {
+        ("wss://", rest)
+    } else if let Some(rest) = base.strip_prefix("http://") {
+        ("ws://", rest)
+    } else {
+        ("", base)
+    };
+    format!("{scheme}{rest}/{name}/connect")
 }
 
 pub fn random_name() -> anyhow::Result<String> {
