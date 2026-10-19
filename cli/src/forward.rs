@@ -4,7 +4,6 @@ use bytes::Bytes;
 use futures_channel::mpsc;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -116,6 +115,8 @@ enum Outgoing<'a> {
     },
     #[serde(rename = "end")]
     End { id: u32 },
+    #[serde(rename = "err")]
+    Error { id: u32, message: &'a str },
     #[serde(rename = "ws-fail")]
     SocketFailed { id: u32 },
     #[serde(rename = "ws-ok")]
@@ -342,9 +343,10 @@ async fn proxy(
 ) {
     let started = Instant::now();
     let Ok(verb) = reqwest::Method::from_bytes(method.as_bytes()) else {
-        let _ = outbox.unbounded_send(control(
-            json!({"t": "err", "id": id, "message": "Unsupported method\n"}),
-        ));
+        let _ = outbox.unbounded_send(control(Outgoing::Error {
+            id,
+            message: "Unsupported method\n",
+        }));
         return;
     };
     let length = headers
@@ -395,8 +397,10 @@ async fn proxy(
                 target.display,
                 root_cause(&error)
             );
-            let _ =
-                outbox.unbounded_send(control(json!({"t": "err", "id": id, "message": message})));
+            let _ = outbox.unbounded_send(control(Outgoing::Error {
+                id,
+                message: &message,
+            }));
             output::request(
                 &method,
                 &path,
@@ -432,9 +436,11 @@ async fn proxy(
                 }
             }
             Err(error) => {
-                let _ = outbox.unbounded_send(control(
-                    json!({"t": "err", "id": id, "message": error.to_string()}),
-                ));
+                let message = error.to_string();
+                let _ = outbox.unbounded_send(control(Outgoing::Error {
+                    id,
+                    message: &message,
+                }));
                 return;
             }
         }
@@ -563,7 +569,7 @@ fn sendable(code: u16) -> bool {
     matches!(code, 1000..=1003 | 1007..=1014 | 3000..=4999)
 }
 
-fn control(value: impl Serialize) -> Message {
+fn control(value: Outgoing<'_>) -> Message {
     Message::text(serde_json::to_string(&value).expect("control messages serialize to JSON"))
 }
 
